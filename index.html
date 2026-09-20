@@ -207,6 +207,8 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .item .s{font-size:12px;color:var(--ink-3);margin-top:2px}
 .item .d{font-size:13px;color:var(--ink-2);margin-top:3px}
 .item .x{color:var(--ink-3);font-size:18px;padding:0 4px;line-height:1}
+.item[data-act]{cursor:pointer}
+.item .chev{color:var(--ink-3);font-size:18px;flex:0 0 auto;align-self:center}
 .rate{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .rate button{padding:6px 10px;border-radius:999px;border:1.5px solid var(--line);font-size:12px;font-weight:600}
 .rate button.on{border-color:var(--com);background:var(--com-soft);color:var(--com-ink)}
@@ -752,8 +754,8 @@ async function bestTime(w){
 }
 
 /* ================= router + render ================= */
-let R={v:'home',id:null,tab:null};
-function parse(){const h=location.hash.replace(/^#\/?/,'').split('/');R={v:h[0]||'home',id:h[1]||null,tab:h[2]||null};}
+let R={v:'home',id:null,tab:null,sub:null};
+function parse(){const h=location.hash.replace(/^#\/?/,'').split('/');R={v:h[0]||'home',id:h[1]||null,tab:h[2]||null,sub:h[3]||null};}
 function nav(p){if(location.hash==='#/'+p){parse();render();}else location.hash='#/'+p;}
 window.addEventListener('hashchange',()=>{parse();render();window.scrollTo(0,0);});
 const D={ob:{},trip:{},book:{},log:{},tip:{},wish:{},ask:{cat:'Food',sel:{},note:''},cs:{q:''},cv:{},place:{q:''},past:{},base:{}};
@@ -872,6 +874,7 @@ function vNew(){
 function vTrip(){
   const t=trip(R.id);if(!t)return `<section class="screen"><div class="empty"><b>Trip not found</b></div><div style="margin-top:12px"><button class="btn block ghost" data-act="go" data-to="home">Back to trips</button></div></section>`;
   if(t.kind==='past')return vPast(t);
+  if(R.tab==='place')return vPlace(t,R.sub);
   const tab=R.tab||'plan';const s=status(t);
   const clDone=(t.checklist||[]).filter(i=>i.done).length;
   const tabs=[['plan','Plan',''],['saved','Saved',t.saved.length],['itin','Itinerary',t.itinerary?t.itinerary.days.length:''],['book','Bookings',t.bookings.length],['check','Checklist',t.checklist?`${clDone}/${t.checklist.length}`:''],['log','My recs',t.log.length]];
@@ -927,28 +930,57 @@ const gIcon=g=>/walk/i.test(g)&&!/(bus|train|tram|metro|taxi|ferry|drive|car)/i.
 function fmtText(s){const lines=String(s||'').split('\n');let h='',inList=false;const inl=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
   for(const raw of lines){const l=raw.trim();if(/^[-•*]\s+/.test(l)){if(!inList){h+='<ul>';inList=true;}h+=`<li>${inl(l.replace(/^[-•*]\s+/,''))}</li>`;}else{if(inList){h+='</ul>';inList=false;}if(l)h+=`<p>${inl(l.replace(/^#+\s*/,''))}</p>`;}}
   if(inList)h+='</ul>';return h;}
+function recCard(t,r,ri,mi){const sv=t.saved.some(x=>x.key===recKey(r));
+  return `<div class="card ai-card rec-card"><h3>${esc(r.title)}</h3>${r.detail?`<p>${esc(r.detail)}</p>`:''}${r.getting?`<p class="getting">${gIcon(r.getting)} ${esc(r.getting)}</p>`:''}<div class="foot"><span></span><button class="btn small outline${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'Saved ✓':'Save'}</button></div></div>`;}
+function recCardsHtml(t,recs,mi){
+  if(!recs||!recs.length)return '';
+  const cats=[...new Set(recs.map(r=>r.cat))];
+  let h='<div class="chat-recs">';
+  for(const c of cats){h+=`<p class="group-h">${CAT_IC[c]||''} ${esc(c)}</p>`;
+    recs.forEach((r,ri)=>{if(r.cat===c)h+=recCard(t,r,ri,mi);});}
+  return h+'</div>';
+}
 function chatHtml(t){const b=busy['chat:'+t.id];
   return `<div class="section" style="margin-top:8px">${sectionH('Ask about this trip')}
-  <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${(m.recs||[]).length?`<div class="chat-recs"><p class="group-h">Recommendations</p>${m.recs.map((r,ri)=>{const sv=t.saved.some(x=>x.key===recKey(r));return `<div class="card ai-card rec-card"><h3>${esc(r.title)}</h3>${r.detail?`<p>${esc(r.detail)}</p>`:''}${r.getting?`<p class="getting">${gIcon(r.getting)} ${esc(r.getting)}</p>`:''}<div class="foot"><span class="s">${CAT_IC[r.cat]||''} ${esc(r.cat)}</span><button class="btn small outline${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'Saved ✓':'Save'}</button></div></div>`;}).join('')}</div>`:''}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
+  <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${recCardsHtml(t,m.recs,mi)}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
   ${S.settings.apiKey?`<div class="ask-row"><input id="chat-in" placeholder="e.g. Where can we get good pizza?" enterkeyhint="send" autocomplete="off"><button class="btn" data-act="chat" data-id="${t.id}" ${b?'disabled':''}>Ask</button></div>${t.chat.length?`<p style="margin-top:8px"><button class="link" data-act="clearChat" data-id="${t.id}">Clear conversation</button></p>`:''}`:`<p class="hint">Add your API key in Settings to ask questions.</p>`}</div>`;}
 function tSaved(t){
   const open=started(t);
   let h=`<div class="btn-row" style="margin-bottom:10px"><button class="btn small ghost" data-act="tipSheet" data-id="${t.id}" data-src="friend">+ Friend's tip</button><button class="btn small ghost" data-act="tipSheet" data-id="${t.id}" data-src="me">+ My idea</button><button class="btn small ghost" data-act="go" data-to="ask/${t.id}">Ask friends</button></div>`;
   if(!t.saved.length)return h+`<div class="empty"><b>Nothing saved yet</b>Tap Save on anything in the plan, or add a tip a friend gave you.</div>`;
-  if(open)h+=`<p class="hint" style="margin-bottom:6px">Rate what you saved — it closes the loop and earns points.</p>`;
+  if(open)h+=`<p class="hint" style="margin-bottom:6px">Tap something to mark it visited, add a review, or move it to its own section.</p>`;
   const cats=[...new Set(t.saved.map(s=>s.cat))];
   for(const c of cats){h+=`<p class="group-h">${CAT_IC[c]||'•'} ${esc(c)}</p>`;
     for(const s of t.saved.filter(x=>x.cat===c)){
-      const q=baseQ(t);const pq=placeQ(t,s.place||s.title);const rb=busy['route:'+s.id];const physical=!['Watch-outs','Timing'].includes(s.cat);
-      const mb=busy['more:'+s.id];
-      h+=`<div class="item"><div class="body"><div class="t">${esc(s.title)}</div><div class="s">${s.src==='ai'?'<span class="badge ai">AI</span>':s.src==='friend'?`<span class="badge com">From ${esc(s.from||'a friend')}</span>`:'<span class="badge me">My idea</span>'}${s.state?` · ${LOOP_RATE[s.state]}`:''}</div>${s.detail?`<div class="d">${esc(s.detail)}</div>`:''}
-      ${s.getting?`<p class="getting">${gIcon(s.getting)} ${esc(s.getting)}</p>`:''}${s.route?`<p class="getting">🧭 ${esc(s.route)}</p>`:''}
-      ${s.more?`<div class="d" style="margin-top:4px"><b>What people say:</b> ${esc(s.more)}</div>`:(physical&&S.settings.apiKey?`<button class="lnk" data-act="moreInfo" data-id="${t.id}" data-s="${s.id}" ${mb?'disabled':''}>${mb?'Looking it up…':'✨ What do people say about this?'}</button>`:'')}
-      ${physical?`<div class="links" style="margin-top:6px">${ext(safeUrl(s.link),(hostOf(safeUrl(s.link))||'Link')+' ↗')}${ext(mapsSearch(pq),'Map ↗')}${q?ext(mapsDir(q,pq),'Directions ↗'):''}${q&&S.settings.apiKey&&!s.route&&!s.getting?`<button class="lnk" data-act="route" data-id="${t.id}" data-s="${s.id}" ${rb?'disabled':''}>${rb?'Working it out…':'How do I get there?'}</button>`:''}</div>`:(s.link?`<div class="links" style="margin-top:6px">${ext(safeUrl(s.link),'Link ↗')}</div>`:'')}
-      ${!s.key?`<p style="margin-top:6px"><button class="lnk" data-act="addSavedToPlan" data-id="${t.id}" data-s="${s.id}">+ Add to plan</button></p>`:''}
-      ${open?`<div class="rate">${Object.entries(LOOP_RATE).map(([k,l])=>`<button class="${s.state===k?'on':''}" data-act="rateSaved" data-id="${t.id}" data-s="${s.id}" data-r="${k}">${l}</button>`).join('')}</div>${s.review?`<div class="d" style="margin-top:4px"><b>Your review:</b> ${esc(s.review)} <button class="lnk" data-act="reviewSheet" data-id="${t.id}" data-s="${s.id}">Edit</button></div>`:`<p style="margin-top:4px"><button class="lnk" data-act="reviewSheet" data-id="${t.id}" data-s="${s.id}">+ Add your review</button></p>`}`:''}</div>
-      <button class="x" data-act="delSaved" data-id="${t.id}" data-s="${s.id}" aria-label="Remove">×</button></div>`;}}
+      h+=`<div class="item" data-act="go" data-to="trip/${t.id}/place/${s.id}"><div class="body"><div class="t">${esc(s.title)}</div><div class="s">${s.src==='ai'?'<span class="badge ai">AI</span>':s.src==='friend'?`<span class="badge com">From ${esc(s.from||'a friend')}</span>`:'<span class="badge me">My idea</span>'}${s.state?` · ${LOOP_RATE[s.state]}`:''}${s.key?' · <span class="badge com">In plan</span>':''}</div>${s.detail?`<div class="d">${esc(s.detail)}</div>`:''}</div>
+      <span class="chev">${ICON.chev||'›'}</span></div>`;}}
   return h;
+}
+function vPlace(t,sid){
+  const s=t.saved.find(x=>x.id===sid);
+  if(!s)return `<section class="screen"><div class="empty"><b>Not found</b></div><div style="margin-top:12px"><button class="btn block ghost" data-act="go" data-to="trip/${t.id}/saved">Back to Saved</button></div></section>`;
+  const q=baseQ(t);const pq=placeQ(t,s.place||s.title);const rb=busy['route:'+s.id];const mb=busy['more:'+s.id];
+  const physical=!['Watch-outs','Timing'].includes(s.cat);const open=started(t);
+  const cats=[...new Set([...CATS,...t.saved.map(x=>x.cat)])];
+  return `<section class="screen">
+  <div style="margin-bottom:12px"><button class="back" data-act="go" data-to="trip/${t.id}/saved">${ICON.back}Saved</button></div>
+  <p class="eyebrow">${s.src==='ai'?'AI recommendation':s.src==='friend'?`From ${esc(s.from||'a friend')}`:'Your idea'}</p>
+  <h1 class="hello" style="font-size:26px">${esc(s.title)}</h1>
+  ${s.detail?`<p style="margin-top:6px">${esc(s.detail)}</p>`:''}
+  ${s.getting?`<p class="getting">${gIcon(s.getting)} ${esc(s.getting)}</p>`:''}${s.route?`<p class="getting">🧭 ${esc(s.route)}</p>`:''}
+  ${s.more?`<div class="card" style="margin-top:12px"><p class="eyebrow">✨ What people say</p><p style="margin-top:6px;color:var(--ink)">${esc(s.more)}</p></div>`:(physical&&S.settings.apiKey?`<button class="btn block ghost" style="margin-top:12px" data-act="moreInfo" data-id="${t.id}" data-s="${s.id}" ${mb?'disabled':''}>${mb?'<span class="spinner dark"></span> Looking it up…':'✨ What do people say about this?'}</button>`:'')}
+  ${physical?`<div class="links" style="margin-top:12px">${ext(safeUrl(s.link),(hostOf(safeUrl(s.link))||'Link')+' ↗')}${ext(mapsSearch(pq),'Map ↗')}${q?ext(mapsDir(q,pq),'Directions ↗'):''}${q&&S.settings.apiKey&&!s.route&&!s.getting?`<button class="lnk" data-act="route" data-id="${t.id}" data-s="${s.id}" ${rb?'disabled':''}>${rb?'Working it out…':'How do I get there?'}</button>`:''}</div>`:(s.link?`<div class="links" style="margin-top:12px">${ext(safeUrl(s.link),'Link ↗')}</div>`:'')}
+  <div class="section"><p class="lab">Section</p><div class="chips">${cats.map(c=>`<button class="chip${s.cat===c?' on':''}" data-act="setCat" data-id="${t.id}" data-s="${s.id}" data-c="${esc(c)}">${CAT_IC[c]||'•'} ${esc(c)}</button>`).join('')}</div>
+    <div class="ask-row" style="margin-top:8px"><input id="new-cat" placeholder="Or create your own, e.g. Breakfast" autocomplete="off" enterkeyhint="done"><button class="btn ghost" data-act="addCat" data-id="${t.id}" data-s="${s.id}">Add</button></div>
+  </div>
+  <div class="section"><button class="btn block${s.key?' ghost':''}" data-act="addSavedToPlan" data-id="${t.id}" data-s="${s.id}">${s.key?'✓ In your plan':'+ Add to plan'}</button>
+    <p class="hint" style="margin-top:6px">Things in your plan help the AI build your itinerary — and show you what you actually want to do.</p></div>
+  <div class="section"><p class="lab">${open?'Visited?':'Once your trip starts, you can mark this visited and review it'}</p>
+  ${open?`<div class="rate">${Object.entries(LOOP_RATE).map(([k,l])=>`<button class="${s.state===k?'on':''}" data-act="rateSaved" data-id="${t.id}" data-s="${s.id}" data-r="${k}">${l}</button>`).join('')}</div>
+  ${s.review?`<div class="card" style="margin-top:10px"><p class="eyebrow">Your review</p><p style="margin-top:6px;color:var(--ink)">${esc(s.review)}</p><button class="link" style="margin-top:6px" data-act="reviewSheet" data-id="${t.id}" data-s="${s.id}">Edit</button></div>`:''}`:''}
+  </div>
+  <button class="btn block danger" style="margin-top:8px" data-act="delSavedGo" data-id="${t.id}" data-s="${s.id}">Remove from Saved</button>
+  </section>`;
 }
 function tItin(t){
   const b=busy['itin:'+t.id];
@@ -1119,7 +1151,8 @@ function reviewSheetR(){const d=D.rev;return `<h2>Your review</h2><p class="sub"
   <button class="btn block" data-act="saveReview">Save</button>`;}
 function tipSheetR(){const d=D.tip;return `<h2>${d.src==='friend'?"Add a friend's tip":'Add your own idea'}</h2><p class="sub">It goes into Saved, and you'll be asked how it was after the trip.</p>
   ${d.src==='friend'?`<div class="field"><label for="tp-from">Who's it from?</label><input id="tp-from" data-bind="tip.from" value="${esc(d.from)}" placeholder="e.g. Jayden" autocomplete="off"></div>`:''}
-  <div class="field"><span class="lab">Category</span>${chips('tip','cat',CATS)}</div>
+  <div class="field"><span class="lab">Category</span>${chips('tip','cat',CATS)}
+    <input id="tp-cat-custom" style="margin-top:8px" data-bind="tip.catCustom" value="${esc(d.catCustom||'')}" placeholder="Or type your own, e.g. Breakfast" autocomplete="off"></div>
   <div class="field"><label for="tp-title">What is it?</label><input id="tp-title" data-bind="tip.title" value="${esc(d.title)}" placeholder="e.g. Osteria del Gallo — the perch risotto" autocomplete="off"></div>
   <div class="field"><label for="tp-detail">Details (optional)</label><textarea id="tp-detail" data-bind="tip.detail" placeholder="Anything they said">${esc(d.detail)}</textarea></div>
   <div class="field"><label for="tp-link">Link (optional)</label><input id="tp-link" type="url" inputmode="url" data-bind="tip.link" value="${esc(d.link)}" placeholder="Website, Google Maps or TripAdvisor link" autocapitalize="off" autocomplete="off"></div>
@@ -1278,10 +1311,14 @@ const A={
   clearBase:()=>{const t=trip(D.base.trip);t.base=null;save();closeSheet();render();},
   chat:el=>{const t=trip(el.dataset.id);if(t)sendChat(t);},
   clearChat:el=>{const t=trip(el.dataset.id);if(t&&confirm('Clear this conversation?')){t.chat=[];save();render();}},
-  rateSaved:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);const was=s.state;s.state=s.state===el.dataset.r?'':el.dataset.r;save();render();if(!was&&s.state)toast('+15 points — thanks for closing the loop');},
+  rateSaved:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);const was=s.state;s.state=s.state===el.dataset.r?'':el.dataset.r;save();render();
+    if(!was&&s.state){toast('+15 points — thanks for closing the loop');if(s.state!=='skip'){D.rev={trip:t.id,id:s.id,text:s.review||''};openSheet(reviewSheetR);}}},
   delSaved:el=>{const t=trip(el.dataset.id);t.saved=t.saved.filter(x=>x.id!==el.dataset.s);save();render();},
-  tipSheet:el=>{D.tip={trip:el.dataset.id,src:el.dataset.src,from:'',cat:'Food',title:'',detail:'',link:''};openSheet(tipSheetR);},
-  saveTip:()=>{const d=D.tip;const t=trip(d.trip);if(!String(d.title||'').trim())return toast('What is it?');if(d.link&&!safeUrl(d.link))return toast('That link doesn\'t look right');t.saved.push({id:uid(),key:'',cat:d.cat,title:d.title.trim(),detail:(d.detail||'').trim(),link:safeUrl(d.link),src:d.src,from:(d.from||'').trim(),state:'',more:'',review:''});save();closeSheet();render();toast('Saved');},
+  delSavedGo:el=>{const t=trip(el.dataset.id);t.saved=t.saved.filter(x=>x.id!==el.dataset.s);save();nav(`trip/${t.id}/saved`);},
+  setCat:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(s){s.cat=el.dataset.c;save();render();toast('Moved to '+el.dataset.c);}},
+  addCat:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);const inp=$('#new-cat');const v=(inp&&inp.value||'').trim();if(!v)return toast('Type a name first');if(s){s.cat=v;save();render();toast('Moved to '+v);}},
+  tipSheet:el=>{D.tip={trip:el.dataset.id,src:el.dataset.src,from:'',cat:'Food',catCustom:'',title:'',detail:'',link:''};openSheet(tipSheetR);},
+  saveTip:()=>{const d=D.tip;const t=trip(d.trip);if(!String(d.title||'').trim())return toast('What is it?');if(d.link&&!safeUrl(d.link))return toast('That link doesn\'t look right');const cat=String(d.catCustom||'').trim()||d.cat;t.saved.push({id:uid(),key:'',cat,title:d.title.trim(),detail:(d.detail||'').trim(),link:safeUrl(d.link),src:d.src,from:(d.from||'').trim(),state:'',more:'',review:''});save();closeSheet();render();toast('Saved');},
   addSavedToPlan:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!s||s.key)return;const pk=SEC_CAT_KEY[s.cat]||'todo';s.key=pk+'|'+s.title;addToPlan(t,pk,{title:s.title,detail:s.detail,why:'',place:s.place||'',getting:s.getting||'',fromChat:true});save();render();toast('Added to your plan under '+SEC[pk].t);},
   moreInfo:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(t&&s)moreInfo(t,s);},
   reviewSheet:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!t||!s)return;D.rev={trip:t.id,id:s.id,text:s.review||''};openSheet(reviewSheetR);},
