@@ -280,8 +280,11 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .lnk{font-size:13px;font-weight:600;color:var(--accent);text-decoration:none;padding:2px 0}
 button.lnk{font:inherit;font-size:13px;font-weight:600;color:var(--accent)}
 .getting{font-size:13px;color:var(--ink);margin-top:8px}
-.chat-recs{margin:-2px 0 12px}
-.chat-recs .chip{font-size:13px;padding:7px 11px}
+.chat-recs{margin:0 0 12px}
+.chat-recs .group-h{margin-top:4px}
+.rec-card{margin-bottom:10px}
+.rec-card h3{font-size:15px}
+.rec-card .foot .s{font-size:12px;color:var(--ink-3)}
 .pill-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -424,7 +427,7 @@ const LOG_TAGS={
 const LOG_IC=Object.fromEntries(LOG_TYPES.map(x=>[x.v,x.e]));
 const LOG_RATE={loved:'🙌 Loved it',good:'👍 Good',meh:'😐 Meh',avoid:'👎 Avoid'};
 const LOOP_RATE={loved:'🙌 Loved it',good:'👍 Good',meh:'😐 Meh',skip:'🚫 Didn\'t go'};
-const BOOK_TYPES=[{v:'flight',l:'Flight',e:'✈️'},{v:'stay',l:'Stay',e:'🏠'},{v:'ticket',l:'Ticket',e:'🎟️'},{v:'transport',l:'Transport',e:'🚆'},{v:'activity',l:'Activity',e:'🧭'},{v:'other',l:'Other',e:'📌'}];
+const BOOK_TYPES=[{v:'flight',l:'Flight',e:'✈️'},{v:'stay',l:'Stay',e:'🏠'},{v:'ticket',l:'Ticket',e:'🎟️'},{v:'match',l:'Match',e:'⚽'},{v:'transport',l:'Transport',e:'🚆'},{v:'activity',l:'Activity',e:'🧭'},{v:'other',l:'Other',e:'📌'}];
 const BOOK_IC=Object.fromEntries(BOOK_TYPES.map(x=>[x.v,x.e]));
 const MODELS=[{v:'claude-sonnet-5',l:'Sonnet 5 — best balance (recommended)'},{v:'claude-opus-5',l:'Opus 5 — most capable, costs more'},{v:'claude-haiku-4-5-20251001',l:'Haiku 4.5 — fastest and cheapest'}];
 const ASK={
@@ -452,7 +455,7 @@ function normalize(s){
   const d=defaults();const o=Object.assign(d,s||{});
   o.profile=Object.assign(defaults().profile,o.profile||{});
   o.settings=Object.assign(defaults().settings,o.settings||{});
-  o.trips=(o.trips||[]).map(t=>Object.assign({saved:[],bookings:[],log:[],chat:[],extras:[],checklist:null,plan:null,review:null,statusOverride:'',budgetAmount:'',base:null},t));
+  o.trips=(o.trips||[]).map(t=>Object.assign({saved:[],bookings:[],log:[],chat:[],extras:[],checklist:null,plan:null,itinerary:null,review:null,statusOverride:'',budgetAmount:'',base:null},t));
   o.wishlist=o.wishlist||[];o.countries=o.countries||{};
   // older versions stored past visits inside the country — turn them into past trips
   for(const [c,v] of Object.entries(o.countries)){
@@ -549,8 +552,8 @@ TRIP
 }
 function priorLogs(t){if(!t.country)return '';const p=S.trips.filter(x=>x.id!==t.id&&x.country===t.country).flatMap(x=>x.log.map(l=>`${l.name} (${x.dest}, ${l.type.toLowerCase()}${l.rating?', '+(LOG_RATE[l.rating]||'').replace(/^\S+\s/,'').toLowerCase():''})`)).slice(0,20);
   return p.length?`\n- Places they've already been in ${cName(t.country)} and what they thought (use this to judge their taste; don't just repeat them): ${p.join('; ')}`:'';}
-function ctxBookings(t){return t.bookings.length?'\nBOOKINGS\n'+t.bookings.map(b=>`- ${b.type}: ${b.title}${b.start?`, ${b.start}${b.time?' '+b.time:''}`:''}${b.end?` to ${b.end}`:''}${b.cost!==''&&b.cost!=null?`, ${money(b.cost,b.currency)}`:''}${b.cancelBy?`, free cancellation until ${b.cancelBy}`:''}${b.notes?` (${b.notes})`:''}`).join('\n'):'\nBOOKINGS: none added yet';}
-function ctxPlan(t){if(!t.plan)return '';return '\nCURRENT PLAN HIGHLIGHTS\n'+t.plan.sections.map(s=>`${SEC[s.key]?.t||s.key}: ${(s.items||[]).map(i=>i.title).join('; ')}`).join('\n')+(t.saved.length?'\nSAVED: '+t.saved.map(s=>s.title).join('; '):'');}
+function ctxBookings(t){return t.bookings.length?'\nBOOKINGS\n'+t.bookings.map(b=>`- ${b.type}: ${b.title}${b.start?`, ${b.start}${b.time?' '+b.time:''}`:''}${b.end?` to ${b.end}`:''}${b.address?`, at ${b.address}`:''}${b.cost!==''&&b.cost!=null?`, ${money(b.cost,b.currency)}`:''}${b.cancelBy?`, free cancellation until ${b.cancelBy}`:''}${b.notes?` (${b.notes})`:''}`).join('\n'):'\nBOOKINGS: none added yet';}
+function ctxPlan(t){if(!t.plan)return '';return '\nCURRENT PLAN HIGHLIGHTS\n'+t.plan.sections.map(s=>`${SEC[s.key]?.t||s.key}: ${(s.items||[]).map(i=>i.title).join('; ')}`).join('\n')+(t.saved.length?'\nSAVED: '+t.saved.map(s=>`${s.title}${s.state?` (${LOOP_RATE[s.state]}${s.review?': '+s.review:''})`:''}`).join('; '):'');}
 function planKeys(t){const k=baseQ(t)?['stay','travel','food']:['stay','type','travel','food'];if(t.main==='Nightlife'||(t.extras||[]).includes('Nightlife'))k.push('nightlife');k.push('todo','around','watch');if(!(t.datesKnown&&t.from))k.unshift('timing');return k;}
 const SEC_GUIDE={
   timing:'best time to go for this traveller and trip type, 2-3 items (month ranges and why: weather, prices, events, school holidays if kids).',
@@ -650,8 +653,8 @@ async function sendChat(t){
   const b=baseQ(t);
   try{
     const hist=t.chat.slice(-8).map(m=>`${m.role==='user'?'Traveller':'Assistant'}: ${m.text}`).join('\n');
-    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+ctxPlan(t)+`\n\nCONVERSATION\n${hist}\n\nReply to the traveller's last message in plain text: under 160 words, practical and specific to this trip, "- " at the start of a line for list items.
-Then, on a new final line, write RECS: followed by a JSON array of the specific places or things you recommended (max 6) so they can save them: [{"title":"name","detail":"one sentence","cat":"Food|Nightlife|Stay|Things to do|Getting around|Watch-outs","place":"name to search on a map, or empty"${b?`,"getting":"how far from where they're staying and how, e.g. 10 min walk"`:''}}]. Write RECS: [] if nothing specific.`,maxTokens:1800,search:true});
+    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+ctxPlan(t)+`\n\nCONVERSATION\n${hist}\n\nReply to the traveller's last message in plain text, practical and specific to this trip. If you're recommending specific places or things, keep this text to a short 1-2 sentence intro only (under 40 words) — do NOT list or describe each one here, they'll be shown separately as cards. For anything else (advice, an answer with no specific recs), reply normally in plain text under 160 words, "- " at the start of a line for list items.
+Then, on a new final line, write RECS: followed by a JSON array of the specific places or things you recommended (max 6) so they can save them: [{"title":"name","detail":"1-2 sentences, specific — this is the only place the detail is shown, so make it count","cat":"Food|Nightlife|Stay|Things to do|Getting around|Watch-outs","place":"name to search on a map, or empty"${b?`,"getting":"how far from where they're staying and how, e.g. 10 min walk"`:''}}]. Write RECS: [] if nothing specific.`,maxTokens:1800,search:true});
     let text=r.text,recs=[];const at=text.lastIndexOf('RECS:');
     if(at>=0){const tail=text.slice(at+5);text=text.slice(0,at);try{const a=tail.indexOf('['),z=tail.lastIndexOf(']');if(a>=0&&z>a)recs=JSON.parse(tail.slice(a,z+1));}catch(_){recs=[];}}
     recs=(Array.isArray(recs)?recs:[]).filter(x=>x&&x.title).slice(0,6).map(x=>({title:String(x.title),detail:String(x.detail||''),cat:CATS.includes(x.cat)?x.cat:'Things to do',place:String(x.place||''),getting:String(x.getting||'')}));
@@ -710,6 +713,37 @@ async function routeFor(t,s){
   const k='route:'+s.id;if(busy[k])return;busy[k]=1;render();
   try{const r=await ai({prompt:`Today is ${today()}. A traveller staying at "${baseQ(t)}" wants to get to "${placeQ(t,s.place||s.title)}"${t.who==='Family with kids'?' with children':''}. How far is it, and what's the best way there (walk, bus, tram, train, taxi)? One or two short sentences with rough times, and cost in GBP if it isn't walking. Plain text.`,maxTokens:350,search:true});
     s.route=r.text.trim();save();}catch(e){aiErr(e);}finally{delete busy[k];render();}
+}
+async function moreInfo(t,s){
+  const k='more:'+s.id;if(busy[k])return;busy[k]=1;render();
+  try{
+    const r=await ai({prompt:`A traveller is deciding on "${s.title}"${s.place?` (${s.place})`:''} for a trip to ${t.dest}${t.country?', '+cName(t.country):''}. Based on real reviews you can find online, write 2-3 short sentences: what people consistently praise, and one practical thing to know before going (booking needed, queues, price level, best time to go). Be honest if opinions are mixed. Plain text, no headings, no markdown.`,maxTokens:400,search:true});
+    s.more=r.text.trim();save();
+  }catch(e){aiErr(e);}finally{delete busy[k];render();}
+}
+async function findMatch(){
+  const b=D.book;if(!String(b.title||'').trim())return toast('Add the two teams first, e.g. "Como vs Man Utd"');
+  busy.match=1;drawSheet();
+  try{
+    const t=trip(b.trip);
+    const r=await ai({prompt:`Find the real-world football fixture "${b.title}"${b.start?` around ${b.start}`:''}${t&&t.country?`, likely in or near ${cName(t.country)}`:''}. Reply with only JSON: {"start":"YYYY-MM-DD kickoff date, your best judgement if you're not certain","time":"HH:MM kickoff time, local 24h, empty if unknown","address":"stadium name and city","notes":"competition and round, e.g. 'Champions League, matchday 3' — say if any detail is a best guess"}.`,maxTokens:500,search:true});
+    const j=pj(r.text);
+    if(j.start)b.start=String(j.start);if(j.time)b.time=String(j.time);if(j.address)b.address=String(j.address);if(j.notes)b.notes=String(j.notes);
+    toast('Filled in — check it looks right');
+  }catch(e){aiErr(e);}finally{delete busy.match;drawSheet();}
+}
+async function buildItinerary(t){
+  if(!t)return;const k='itin:'+t.id;if(busy[k])return;busy[k]=1;render();
+  try{
+    const planDigest=t.plan?t.plan.sections.map(s=>(s.items||[]).map(i=>`${SEC[s.key]?.t||s.key}: ${i.title}${i.place?` (${i.place})`:''}${i.getting?` — ${i.getting}`:''}`).join('\n')).filter(Boolean).join('\n'):'';
+    const savedDigest=t.saved.map(s=>`${s.title}${s.place?` (${s.place})`:''} [${s.cat}]${s.state?` — ${LOOP_RATE[s.state]}`:''}`).join('\n');
+    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+`\n\nPLAN ITEMS\n${planDigest||'none'}\n\nSAVED PLACES\n${savedDigest||'none'}\n\nBuild a realistic day-by-day itinerary for this trip using ONLY the bookings, plan items and saved places listed above — don't invent new places. Anchor each day around any fixed-time bookings (flights, matches, tickets) and fit meals and activities around them sensibly, in a sensible order by location where you can tell. If dates aren't known, use "Day 1", "Day 2" etc instead of real dates.
+Reply with only JSON: {"days":[{"date":"YYYY-MM-DD or Day 1","items":[{"time":"HH:MM or empty","title":"short","note":"one short sentence — why it's there, or how to get there"}]}]}`,maxTokens:2200});
+    const j=pj(r.text);
+    const days=(Array.isArray(j.days)?j.days:[]).map(d=>({date:String(d.date||''),items:(Array.isArray(d.items)?d.items:[]).filter(i=>i&&i.title).map(i=>({time:String(i.time||''),title:String(i.title),note:String(i.note||'')}))})).filter(d=>d.items.length);
+    if(!days.length)throw new Error('BAD_JSON');
+    t.itinerary={days,at:new Date().toISOString()};save();toast('Itinerary ready');
+  }catch(e){aiErr(e);}finally{delete busy[k];render();}
 }
 async function bestTime(w){
   const k='best:'+w.id;if(busy[k])return;busy[k]=1;render();
@@ -840,8 +874,8 @@ function vTrip(){
   if(t.kind==='past')return vPast(t);
   const tab=R.tab||'plan';const s=status(t);
   const clDone=(t.checklist||[]).filter(i=>i.done).length;
-  const tabs=[['plan','Plan',''],['saved','Saved',t.saved.length],['book','Bookings',t.bookings.length],['check','Checklist',t.checklist?`${clDone}/${t.checklist.length}`:''],['log','My recs',t.log.length]];
-  const V={plan:tPlan,saved:tSaved,book:tBook,check:tCheck,log:tLog};
+  const tabs=[['plan','Plan',''],['saved','Saved',t.saved.length],['itin','Itinerary',t.itinerary?t.itinerary.days.length:''],['book','Bookings',t.bookings.length],['check','Checklist',t.checklist?`${clDone}/${t.checklist.length}`:''],['log','My recs',t.log.length]];
+  const V={plan:tPlan,saved:tSaved,itin:tItin,book:tBook,check:tCheck,log:tLog};
   return `<section class="screen">
   <div class="hero" style="background:${grad(t.dest)}">
     <div class="hero-top"><button class="back light" data-act="go" data-to="home">${ICON.back}Trips</button><button class="icon-btn" data-act="tripMenu" data-id="${t.id}" aria-label="Trip options">${ICON.more}</button></div>
@@ -895,7 +929,7 @@ function fmtText(s){const lines=String(s||'').split('\n');let h='',inList=false;
   if(inList)h+='</ul>';return h;}
 function chatHtml(t){const b=busy['chat:'+t.id];
   return `<div class="section" style="margin-top:8px">${sectionH('Ask about this trip')}
-  <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${(m.recs||[]).length?`<div class="chat-recs"><p class="hint" style="margin-bottom:6px">Save to this trip — it goes into Saved and your plan:</p><div class="chips">${m.recs.map((r,ri)=>{const sv=t.saved.some(x=>x.key===recKey(r));return `<button class="chip${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'✓':'＋'} ${esc(r.title)}</button>`;}).join('')}</div></div>`:''}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
+  <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${(m.recs||[]).length?`<div class="chat-recs"><p class="group-h">Recommendations</p>${m.recs.map((r,ri)=>{const sv=t.saved.some(x=>x.key===recKey(r));return `<div class="card ai-card rec-card"><h3>${esc(r.title)}</h3>${r.detail?`<p>${esc(r.detail)}</p>`:''}${r.getting?`<p class="getting">${gIcon(r.getting)} ${esc(r.getting)}</p>`:''}<div class="foot"><span class="s">${CAT_IC[r.cat]||''} ${esc(r.cat)}</span><button class="btn small outline${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'Saved ✓':'Save'}</button></div></div>`;}).join('')}</div>`:''}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
   ${S.settings.apiKey?`<div class="ask-row"><input id="chat-in" placeholder="e.g. Where can we get good pizza?" enterkeyhint="send" autocomplete="off"><button class="btn" data-act="chat" data-id="${t.id}" ${b?'disabled':''}>Ask</button></div>${t.chat.length?`<p style="margin-top:8px"><button class="link" data-act="clearChat" data-id="${t.id}">Clear conversation</button></p>`:''}`:`<p class="hint">Add your API key in Settings to ask questions.</p>`}</div>`;}
 function tSaved(t){
   const open=started(t);
@@ -906,11 +940,22 @@ function tSaved(t){
   for(const c of cats){h+=`<p class="group-h">${CAT_IC[c]||'•'} ${esc(c)}</p>`;
     for(const s of t.saved.filter(x=>x.cat===c)){
       const q=baseQ(t);const pq=placeQ(t,s.place||s.title);const rb=busy['route:'+s.id];const physical=!['Watch-outs','Timing'].includes(s.cat);
+      const mb=busy['more:'+s.id];
       h+=`<div class="item"><div class="body"><div class="t">${esc(s.title)}</div><div class="s">${s.src==='ai'?'<span class="badge ai">AI</span>':s.src==='friend'?`<span class="badge com">From ${esc(s.from||'a friend')}</span>`:'<span class="badge me">My idea</span>'}${s.state?` · ${LOOP_RATE[s.state]}`:''}</div>${s.detail?`<div class="d">${esc(s.detail)}</div>`:''}
       ${s.getting?`<p class="getting">${gIcon(s.getting)} ${esc(s.getting)}</p>`:''}${s.route?`<p class="getting">🧭 ${esc(s.route)}</p>`:''}
+      ${s.more?`<div class="d" style="margin-top:4px"><b>What people say:</b> ${esc(s.more)}</div>`:(physical&&S.settings.apiKey?`<button class="lnk" data-act="moreInfo" data-id="${t.id}" data-s="${s.id}" ${mb?'disabled':''}>${mb?'Looking it up…':'✨ What do people say about this?'}</button>`:'')}
       ${physical?`<div class="links" style="margin-top:6px">${ext(safeUrl(s.link),(hostOf(safeUrl(s.link))||'Link')+' ↗')}${ext(mapsSearch(pq),'Map ↗')}${q?ext(mapsDir(q,pq),'Directions ↗'):''}${q&&S.settings.apiKey&&!s.route&&!s.getting?`<button class="lnk" data-act="route" data-id="${t.id}" data-s="${s.id}" ${rb?'disabled':''}>${rb?'Working it out…':'How do I get there?'}</button>`:''}</div>`:(s.link?`<div class="links" style="margin-top:6px">${ext(safeUrl(s.link),'Link ↗')}</div>`:'')}
-      ${open?`<div class="rate">${Object.entries(LOOP_RATE).map(([k,l])=>`<button class="${s.state===k?'on':''}" data-act="rateSaved" data-id="${t.id}" data-s="${s.id}" data-r="${k}">${l}</button>`).join('')}</div>`:''}</div>
+      ${!s.key?`<p style="margin-top:6px"><button class="lnk" data-act="addSavedToPlan" data-id="${t.id}" data-s="${s.id}">+ Add to plan</button></p>`:''}
+      ${open?`<div class="rate">${Object.entries(LOOP_RATE).map(([k,l])=>`<button class="${s.state===k?'on':''}" data-act="rateSaved" data-id="${t.id}" data-s="${s.id}" data-r="${k}">${l}</button>`).join('')}</div>${s.review?`<div class="d" style="margin-top:4px"><b>Your review:</b> ${esc(s.review)} <button class="lnk" data-act="reviewSheet" data-id="${t.id}" data-s="${s.id}">Edit</button></div>`:`<p style="margin-top:4px"><button class="lnk" data-act="reviewSheet" data-id="${t.id}" data-s="${s.id}">+ Add your review</button></p>`}`:''}</div>
       <button class="x" data-act="delSaved" data-id="${t.id}" data-s="${s.id}" aria-label="Remove">×</button></div>`;}}
+  return h;
+}
+function tItin(t){
+  const b=busy['itin:'+t.id];
+  if(!S.settings.apiKey)return keyCard();
+  if(!t.itinerary)return `<div class="card ai-card"><span class="badge ai">${ICON.spark} Itinerary</span><h3 style="margin-top:8px">Build a day-by-day plan</h3><p>Pulls together your bookings, saved places and plan into a schedule for each day — fixed times (flights, matches, tickets) go in first, everything else is fitted around them.</p><button class="btn block" style="margin-top:12px" data-act="genItin" data-id="${t.id}" ${b?'disabled':''}>${b?'<span class="spinner dark"></span> Building…':'Build my itinerary'}</button></div>`;
+  let h=t.itinerary.days.map(d=>`<div class="section"><p class="group-h">${esc(d.date||'')}</p>${(d.items||[]).map(it=>`<div class="item"><div class="body"><div class="t">${it.time?esc(it.time)+' — ':''}${esc(it.title)}</div>${it.note?`<div class="d">${esc(it.note)}</div>`:''}</div></div>`).join('')}</div>`).join('');
+  h+=`<p class="hint" style="margin:12px 0 20px">Built ${fmtD(t.itinerary.at.slice(0,10))} from your bookings, plan and saved places. AI can be wrong — check times before you rely on them. ${b?'<span class="spinner dark"></span> Rebuilding…':`<button class="link" data-act="genItin" data-id="${t.id}">Redo it</button>`}</p>`;
   return h;
 }
 function tBook(t){
@@ -1069,6 +1114,9 @@ function baseSheetR(){const b=D.base;const t=trip(b.trip);const stays=t.bookings
   ${S.settings.apiKey?`<button class="btn block ghost" style="margin-bottom:10px" data-act="findBase" ${bb?'disabled':''}>${bb?'<span class="spinner dark"></span> Looking it up…':ICON.spark+' Find the address with AI'}</button>`:''}
   <button class="btn block" data-act="saveBase">Save</button>
   ${t.base?`<button class="btn block danger" style="margin-top:8px" data-act="clearBase">Remove</button>`:''}`;}
+function reviewSheetR(){const d=D.rev;return `<h2>Your review</h2><p class="sub">What was it actually like? This helps the AI next time, and you can share it with friends.</p>
+  <div class="field"><label for="rev-text">Review</label><textarea id="rev-text" data-bind="rev.text" placeholder="What was it like? Would you go back?">${esc(d.text)}</textarea></div>
+  <button class="btn block" data-act="saveReview">Save</button>`;}
 function tipSheetR(){const d=D.tip;return `<h2>${d.src==='friend'?"Add a friend's tip":'Add your own idea'}</h2><p class="sub">It goes into Saved, and you'll be asked how it was after the trip.</p>
   ${d.src==='friend'?`<div class="field"><label for="tp-from">Who's it from?</label><input id="tp-from" data-bind="tip.from" value="${esc(d.from)}" placeholder="e.g. Jayden" autocomplete="off"></div>`:''}
   <div class="field"><span class="lab">Category</span>${chips('tip','cat',CATS)}</div>
@@ -1080,9 +1128,10 @@ function bookSheetR(){const b=D.book;const bb=busy.book;return `<h2>${b.id?'Edit
   ${S.settings.apiKey?`<div class="field"><label for="b-paste">Paste the confirmation email (optional)</label><textarea id="b-paste" data-bind="book.paste" placeholder="Copy the text of the email and paste it here — the AI fills in the details">${esc(b.paste||'')}</textarea></div>
   <button class="btn block ghost" style="margin:-4px 0 18px" data-act="extract" ${bb?'disabled':''}>${bb?'<span class="spinner dark"></span> Reading…':`${ICON.spark} Fill in with AI`}</button>`:''}
   <div class="field"><span class="lab">Type</span>${chips('book','type',BOOK_TYPES.map(x=>({v:x.v,l:x.e+' '+x.l})))}</div>
-  <div class="field"><label for="b-title">Title</label><input id="b-title" data-bind="book.title" value="${esc(b.title)}" placeholder="e.g. Flights MAN–MXP"></div>
+  <div class="field"><label for="b-title">${b.type==='match'?'Fixture':'Title'}</label><input id="b-title" data-bind="book.title" value="${esc(b.title)}" placeholder="${b.type==='match'?'e.g. Como vs Man Utd':'e.g. Flights MAN–MXP'}"></div>
+  ${b.type==='match'&&S.settings.apiKey?`<button class="btn block ghost" style="margin:-4px 0 14px" data-act="findMatch" ${busy.match?'disabled':''}>${busy.match?'<span class="spinner dark"></span> Looking it up…':`${ICON.spark} Find kick-off time & venue`}</button>`:''}
   <div class="field"><label for="b-link">Link (optional)</label><input id="b-link" type="url" inputmode="url" data-bind="book.link" value="${esc(b.link||'')}" placeholder="${b.type==='stay'?'Airbnb or hotel link':'Booking or venue link'}" autocapitalize="off" autocomplete="off"></div>
-  ${b.type==='stay'||b.type==='ticket'||b.type==='activity'?`<div class="field"><label for="b-addr">Address or area</label><input id="b-addr" data-bind="book.address" value="${esc(b.address||'')}" placeholder="e.g. Via Vitani, Como"></div>`:''}
+  ${b.type==='stay'||b.type==='ticket'||b.type==='activity'||b.type==='match'?`<div class="field"><label for="b-addr">${b.type==='match'?'Stadium / venue':'Address or area'}</label><input id="b-addr" data-bind="book.address" value="${esc(b.address||'')}" placeholder="${b.type==='match'?'e.g. Stadio Giuseppe Sinigaglia, Como':'e.g. Via Vitani, Como'}"></div>`:''}
   <div class="row2"><div class="field"><label for="b-start">Date</label><input id="b-start" type="date" data-bind="book.start" value="${esc(b.start)}"></div><div class="field"><label for="b-time">Time</label><input id="b-time" type="time" data-bind="book.time" value="${esc(b.time)}"></div></div>
   <div class="row2"><div class="field"><label for="b-end">End / check-out</label><input id="b-end" type="date" data-bind="book.end" value="${esc(b.end)}"></div><div class="field"><label for="b-cancel">Free cancellation until</label><input id="b-cancel" type="date" data-bind="book.cancelBy" value="${esc(b.cancelBy)}"></div></div>
   <div class="row2"><div class="field"><label for="b-cost">Total cost</label><input id="b-cost" type="number" inputmode="decimal" step="0.01" data-bind="book.cost" data-num value="${esc(b.cost)}"></div><div class="field"><label for="b-cur">Currency</label><select id="b-cur" data-bind="book.currency">${['GBP','EUR','USD','other'].map(c=>`<option${b.currency===c?' selected':''}>${c}</option>`).join('')}</select></div></div>
@@ -1206,7 +1255,7 @@ const A={
     if(d.datesKnown){if(!d.from)return toast('Add your dates — or choose "Not yet"');if(!d.to)d.to=d.from;if(d.to<d.from)return toast('The end date is before the start date');}
     const fields={dest,country:d.country||guessCountry(dest),datesKnown:!!d.datesKnown,from:d.datesKnown?d.from:'',to:d.datesKnown?d.to:'',season:d.season,who:d.who,adults:d.who==='Solo'?1:(Number(d.adults)||1),kids:d.who==='Solo'?0:(Number(d.kids)||0),occasion:d.occasion,main:d.main,extras:(d.extras||[]).filter(x=>x!==d.main),budget:d.budget,stay:d.stay,origin:String(d.origin||'').trim(),event:String(d.event||'').trim(),notes:d.notes||''};
     if(d.id){const t=trip(d.id);Object.assign(t,fields);save();D.trip={};nav(`trip/${t.id}/plan`);toast(t.plan?'Saved — redo the plan if the changes matter':'Saved');return;}
-    const t={id:uid(),created:new Date().toISOString(),...fields,plan:null,saved:[],bookings:[],checklist:null,log:[],chat:[],review:null,statusOverride:'',budgetAmount:'',base:null};
+    const t={id:uid(),created:new Date().toISOString(),...fields,plan:null,itinerary:null,saved:[],bookings:[],checklist:null,log:[],chat:[],review:null,statusOverride:'',budgetAmount:'',base:null};
     S.trips.push(t);save(true);D.trip={};nav(`trip/${t.id}/plan`);if(S.settings.apiKey)genPlan(t);},
   openTrip:el=>{if(!el.dataset.id)return nav('home');nav(`trip/${el.dataset.id}/${el.dataset.tab||'plan'}`);},
   tab:el=>{R.tab=el.dataset.tab;history.replaceState(null,'',`#/trip/${el.dataset.id}/${el.dataset.tab}`);render();const n=$('.tv-nav');if(n&&n.getBoundingClientRect().top<0)n.scrollIntoView();},
@@ -1214,10 +1263,10 @@ const A={
   genPlan:el=>{const t=trip(el.dataset.id);if(t)genPlan(t);},
   regen:el=>{const t=trip(el.dataset.id);if(t)genPlan(t,el.dataset.k);},
   saveAi:el=>{const t=trip(el.dataset.id);const s=t.plan.sections.find(x=>x.key===el.dataset.k);const it=s.items[+el.dataset.i];const key=s.key+'|'+it.title;const i=t.saved.findIndex(x=>x.key===key);
-    if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}else{t.saved.push({id:uid(),key,cat:SEC[s.key].cat,title:it.title,detail:it.detail,place:it.place||'',getting:it.getting||'',src:'ai',state:''});toast('Saved to this trip');}save();render();},
+    if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}else{t.saved.push({id:uid(),key,cat:SEC[s.key].cat,title:it.title,detail:it.detail,place:it.place||'',getting:it.getting||'',src:'ai',state:'',more:'',review:''});toast('Saved to this trip');}save();render();},
   saveChatRec:el=>{const t=trip(el.dataset.id);const r=t.chat[+el.dataset.m].recs[+el.dataset.r];const key=recKey(r);const sk=key.split('|')[0];const i=t.saved.findIndex(x=>x.key===key);
     if(i>=0){t.saved.splice(i,1);removeFromPlan(t,sk,r.title);toast('Removed from Saved');}
-    else{t.saved.push({id:uid(),key,cat:SEC[sk].cat,title:r.title,detail:r.detail,place:r.place,getting:r.getting,src:'ai',state:''});addToPlan(t,sk,{title:r.title,detail:r.detail,why:'',place:r.place,getting:r.getting,fromChat:true});toast('Saved — also added to your plan under '+SEC[sk].t);}
+    else{t.saved.push({id:uid(),key,cat:SEC[sk].cat,title:r.title,detail:r.detail,place:r.place,getting:r.getting,src:'ai',state:'',more:'',review:''});addToPlan(t,sk,{title:r.title,detail:r.detail,why:'',place:r.place,getting:r.getting,fromChat:true});toast('Saved — also added to your plan under '+SEC[sk].t);}
     save();render();},
   route:el=>{const t=trip(el.dataset.id);const s=t&&t.saved.find(x=>x.id===el.dataset.s);if(s)routeFor(t,s);},
   baseSheet:el=>{const t=trip(el.dataset.id);const b=t.base||{};D.base={trip:t.id,dest:t.dest,name:b.name||'',link:b.link||'',area:b.area||'',note:''};openSheet(baseSheetR);},
@@ -1232,7 +1281,13 @@ const A={
   rateSaved:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);const was=s.state;s.state=s.state===el.dataset.r?'':el.dataset.r;save();render();if(!was&&s.state)toast('+15 points — thanks for closing the loop');},
   delSaved:el=>{const t=trip(el.dataset.id);t.saved=t.saved.filter(x=>x.id!==el.dataset.s);save();render();},
   tipSheet:el=>{D.tip={trip:el.dataset.id,src:el.dataset.src,from:'',cat:'Food',title:'',detail:'',link:''};openSheet(tipSheetR);},
-  saveTip:()=>{const d=D.tip;const t=trip(d.trip);if(!String(d.title||'').trim())return toast('What is it?');if(d.link&&!safeUrl(d.link))return toast('That link doesn\'t look right');t.saved.push({id:uid(),key:'',cat:d.cat,title:d.title.trim(),detail:(d.detail||'').trim(),link:safeUrl(d.link),src:d.src,from:(d.from||'').trim(),state:''});save();closeSheet();render();toast('Saved');},
+  saveTip:()=>{const d=D.tip;const t=trip(d.trip);if(!String(d.title||'').trim())return toast('What is it?');if(d.link&&!safeUrl(d.link))return toast('That link doesn\'t look right');t.saved.push({id:uid(),key:'',cat:d.cat,title:d.title.trim(),detail:(d.detail||'').trim(),link:safeUrl(d.link),src:d.src,from:(d.from||'').trim(),state:'',more:'',review:''});save();closeSheet();render();toast('Saved');},
+  addSavedToPlan:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!s||s.key)return;const pk=SEC_CAT_KEY[s.cat]||'todo';s.key=pk+'|'+s.title;addToPlan(t,pk,{title:s.title,detail:s.detail,why:'',place:s.place||'',getting:s.getting||'',fromChat:true});save();render();toast('Added to your plan under '+SEC[pk].t);},
+  moreInfo:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(t&&s)moreInfo(t,s);},
+  reviewSheet:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!t||!s)return;D.rev={trip:t.id,id:s.id,text:s.review||''};openSheet(reviewSheetR);},
+  saveReview:()=>{const d=D.rev;const t=trip(d.trip);const s=t&&t.saved.find(x=>x.id===d.id);if(s){s.review=String(d.text||'').trim();save();}closeSheet();render();toast('Review saved');},
+  genItin:el=>buildItinerary(trip(el.dataset.id)),
+  findMatch:()=>findMatch(),
   logSheet:el=>{const t=trip(el.dataset.id);if(!t)return;const ex=el.dataset.l&&t.log.find(x=>x.id===el.dataset.l);
     D.log=ex?{currency:'GBP',per:'total',link:'',cost:'',...ex,tags:[...(ex.tags||[])],photos:[...(ex.photos||[])],trip:t.id,newPhotos:[]}:{trip:t.id,id:null,type:'Ate',name:'',rating:'',note:'',tags:[],link:'',cost:'',currency:'GBP',per:'total',photos:[],newPhotos:[],date:t.kind==='past'?'':isNow(t)?today():(t.to||t.from||today())};
     openSheet(logSheetR,()=>{if(D.log.newPhotos&&D.log.newPhotos.length&&!D.log.saved)dropPhotos(D.log.newPhotos);});},

@@ -11,9 +11,12 @@ https://apphackr.github.io/Hindsight/ and installed on his iPhone home screen.
 - **AI:** the app calls the Anthropic Messages API from the browser using the user's own key, stored on the device (header `anthropic-dangerous-direct-browser-access`). The default model is `claude-sonnet-5`. Web search (`web_search_20250305`, max_uses 2) is used only for chat, watch-outs and checklists.
 - **Plans:** each section is generated in parallel (`genPlan` → `genSection`, 3 at a time) and rendered as it arrives.
 - **Chat:** answers end with a `RECS: [...]` JSON line. Those items become one-tap "save" chips, which add to Saved and to the plan (`fromChat`).
-- **Routing:** hash routes (`#/home`, `#/trip/<id>/<tab>`, `#/country/<code>`, `#/me`, `#/wish`, `#/settings`, `#/new`, `#/edit/<id>`, `#/ask/<id>`, `#/onboard`).
+- **Saved items** (`t.saved`): each has `state` (the loved/good/meh/didn't-go reaction, shown once the trip has started — `started(t)`), `review` (the user's own written review, added via the review sheet) and `more` (an on-demand, web-search-backed "what people say" blurb, fetched once and cached — `moreInfo()`). Items not already tied to a plan section (friend's tips, own ideas — `key:''`) get an explicit "+ Add to plan" action (`addSavedToPlan`).
+- **Itinerary:** a separate AI step (`buildItinerary()`, the Itinerary tab) that sequences the trip's bookings, plan items and saved places into a day-by-day schedule (`t.itinerary.days`), anchoring on fixed-time bookings (flights, matches, tickets). It only uses what's already in the plan/saved/bookings — it doesn't invent new places.
+- **Bookings** have a `match` type (⚽) for football fixtures, with a `findMatch()` AI helper (web search) that fills in kickoff date/time and venue from just the fixture name, the same way `extractBooking()` fills a booking from a pasted confirmation email.
+- **Routing:** hash routes (`#/home`, `#/trip/<id>/<tab>`, `#/country/<code>`, `#/me`, `#/wish`, `#/settings`, `#/new`, `#/edit/<id>`, `#/ask/<id>`, `#/onboard`). Trip tabs: `plan`, `saved`, `itin`, `book`, `check`, `log`.
 - **Actions:** event delegation through `data-act` → the `A` object. Drafts live in `D`. State is `S`; call `save()`, then `render()`.
-- **Trips:** a trip with `kind:'past'` is a memory of a past visit, added from a country page. Trips also have `base` (where you're staying), `saved`, `bookings`, `checklist`, `log` (the user's own recs, with photos) and `chat`.
+- **Trips:** a trip with `kind:'past'` is a memory of a past visit, added from a country page. Trips also have `base` (where you're staying), `saved`, `bookings`, `checklist`, `log` (the user's own recs, with photos), `chat` and `itinerary`.
 
 ## Deploying
 Commit to `main`. GitHub Pages serves the repository root. Changes are live in about a minute. The user then fully closes the app and reopens it.

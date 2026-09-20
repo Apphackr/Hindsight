@@ -1,5 +1,5 @@
 // Hindsight service worker — makes the app open offline.
-const V = 'hindsight-v4';
+const V = 'hindsight-v5';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
