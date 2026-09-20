@@ -280,6 +280,8 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .lnk{font-size:13px;font-weight:600;color:var(--accent);text-decoration:none;padding:2px 0}
 button.lnk{font:inherit;font-size:13px;font-weight:600;color:var(--accent)}
 .getting{font-size:13px;color:var(--ink);margin-top:8px}
+.chat-recs{margin:-2px 0 12px}
+.chat-recs .chip{font-size:13px;padding:7px 11px}
 .pill-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -568,8 +570,9 @@ function planPrompt(keys,t){const b=baseQ(t);
 Include exactly these section keys, in this order: ${keys.join(', ')}.
 ${keys.map(k=>`- ${k}: ${guide(k)}`).join('\n')}
 Keep strings concise. Prices in GBP.${b?` Distances and times are from "${b}" — give your best estimate and keep "getting" under 12 words.`:''}`;}
-async function callApi(body){
+async function callApi(body,retry=true){
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':S.settings.apiKey.trim(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify(body)});
+  if(r.status===429&&retry){const ra=Number(r.headers.get('retry-after'))||12;await new Promise(z=>setTimeout(z,Math.min(ra,30)*1000));return callApi(body,false);}
   if(!r.ok){let msg='';try{const j=await r.json();msg=j.error&&j.error.message||'';}catch(_){}const e=new Error(apiMsg(r.status,msg));e.status=r.status;e.raw=msg;throw e;}
   return r.json();
 }
@@ -579,7 +582,7 @@ async function ai({prompt,maxTokens=3000,search=false}){
   if(!navigator.onLine)throw new Error('You\'re offline — AI needs a connection.');
   const useSearch=search&&S.settings.webSearch;
   const body={model:S.settings.model||'claude-sonnet-5',max_tokens:maxTokens,system:SYS,messages:[{role:'user',content:prompt}]};
-  if(useSearch)body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:4}];
+  if(useSearch)body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:2}];
   let j;
   try{j=await callApi(body);}
   catch(e){if(useSearch&&e.status===400&&!/credit|balance/i.test(e.raw||'')){delete body.tools;j=await callApi(body);}else throw e;}
@@ -593,29 +596,71 @@ function pj(text){const a=text.indexOf('{'),b=text.lastIndexOf('}');if(a<0||b<a)
 function aiErr(e){const m=e&&e.message;if(m==='NO_KEY'){toast('Add your API key in Settings to use AI');}else if(m==='BAD_JSON')toast('The answer came back in the wrong format — try again');else if(e instanceof TypeError)toast('Couldn\'t reach Anthropic — check your connection');else toast(m||'Something went wrong');}
 const busy={};
 
-async function genPlan(t,only){
-  const k='plan:'+t.id+(only?':'+only:'');if(busy[k])return;busy[k]=1;render();
+const ORDER=['timing','stay','type','travel','food','nightlife','todo','around','watch'];
+const SEC_CAT_KEY={'Food':'food','Nightlife':'nightlife','Stay':'stay','Things to do':'todo','Getting around':'around','Watch-outs':'watch'};
+const cleanItems=a=>(a||[]).filter(i=>i&&i.title).map(i=>({title:String(i.title),detail:String(i.detail||''),why:String(i.why||''),place:String(i.place||''),getting:String(i.getting||'')}));
+function guideFor(k,t){const b=baseQ(t);return k==='stay'&&b?`they are already staying at "${b}". Assess that location in 2-3 items: what's walkable from it, what needs transport, and the best tip for that area.`:SEC_GUIDE[k];}
+function sectionPrompt(key,t,withSummary,avoid){const b=baseQ(t);
+  return `Write ONE part of this trip plan: ${SEC[key].t}.
+What to cover: ${guideFor(key,t)}
+Reply with only JSON: {${withSummary?'"summary":"one sentence on the overall approach for this traveller",':''}"items":[{"title":"short headline","detail":"2-3 sentences, specific","why":"one sentence on why it suits this traveller/trip","place":"specific place or area name, or empty"${b?',"getting":"how far from where they are staying and how to get there, e.g. \\"10 min walk\\" or \\"25 min: bus C30, then 5 min walk\\" — empty if not a fixed place"':''}}]}
+Keep strings concise. Prices in GBP.${b?` Distances are from "${b}"; keep "getting" under 12 words.`:''}${avoid&&avoid.length?` Give fresh suggestions, different from: ${avoid.join('; ')}.`:''}`;}
+function addToPlan(t,key,item){
+  if(!t.plan)t.plan={summary:'',sections:[],cites:[],partial:true};
+  let s=t.plan.sections.find(x=>x.key===key);
+  if(!s){s={key,items:[]};t.plan.sections.push(s);t.plan.sections.sort((a,b)=>ORDER.indexOf(a.key)-ORDER.indexOf(b.key));}
+  if(!(s.items||[]).some(x=>x.title.toLowerCase()===item.title.toLowerCase()))(s.items=s.items||[]).push(item);
+}
+function removeFromPlan(t,key,title){const s=t.plan&&t.plan.sections.find(x=>x.key===key);if(s)s.items=(s.items||[]).filter(x=>!(x.fromChat&&x.title===title));}
+async function genSection(t,key,single,withSummary){
+  const bk='plan:'+t.id+':'+key;if(busy[bk])return true;busy[bk]=1;if(single)render();
+  const sec=()=>t.plan&&t.plan.sections.find(s=>s.key===key);
   try{
-    const keys=only?[only]:planKeys(t);
-    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+'\n\n'+planPrompt(keys,t)+(only&&t.plan?`\n\nThis is a redo of the "${only}" section only — give fresh, different suggestions from: ${(t.plan.sections.find(s=>s.key===only)?.items||[]).map(i=>i.title).join('; ')}`:''),maxTokens:only?1800:6000,search:true});
-    const j=pj(r.text);if(!Array.isArray(j.sections))throw new Error('BAD_JSON');
-    const clean=j.sections.filter(s=>s&&SEC[s.key]).map(s=>({key:s.key,items:(s.items||[]).filter(i=>i&&i.title).map(i=>({title:String(i.title),detail:String(i.detail||''),why:String(i.why||''),place:String(i.place||''),getting:String(i.getting||'')}))}));
-    if(only&&t.plan){const s=clean.find(x=>x.key===only)||(clean[0]&&{...clean[0],key:only});if(s){const i=t.plan.sections.findIndex(x=>x.key===only);i>=0?t.plan.sections[i]=s:t.plan.sections.push(s);}t.plan.cites=dedupe([...(t.plan.cites||[]),...r.cites]);}
-    else t.plan={summary:String(j.summary||''),sections:clean,cites:r.cites,at:new Date().toISOString(),model:S.settings.model,baseKey:baseQ(t)};
-    save();toast(only?'Section updated':'Your plan is ready');
-  }catch(e){aiErr(e);}finally{delete busy[k];render();}
+    const avoid=single&&sec()?(sec().items||[]).filter(i=>!i.fromChat).map(i=>i.title):[];
+    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+'\n\n'+sectionPrompt(key,t,withSummary,avoid),maxTokens:1500,search:key==='watch'});
+    const j=pj(r.text);const items=cleanItems(j.items);if(!items.length)throw new Error('BAD_JSON');
+    if(!t.plan)t.plan={summary:'',sections:[],cites:[],partial:true};
+    let s=sec();if(!s){addToPlan(t,key,items[0]);s=sec();}
+    s.items=[...items,...(s.items||[]).filter(i=>i.fromChat&&!items.some(x=>x.title===i.title))];s.loading=false;s.error=false;
+    if(j.summary&&!t.plan.summary)t.plan.summary=String(j.summary);
+    t.plan.cites=dedupe([...(t.plan.cites||[]),...r.cites]);save();
+    if(single)toast(SEC[key].t+' updated');return true;
+  }catch(e){const s=sec();if(s){s.loading=false;s.error=true;}if(single)aiErr(e);else genSection.lastErr=e;return false;}
+  finally{delete busy[bk];render();}
+}
+async function genPlan(t,only){
+  if(only)return genSection(t,only,true,false);
+  const k='plan:'+t.id;if(busy[k])return;busy[k]=1;
+  const prev=t.plan;const keys=planKeys(t);
+  const keepChat=(prev?prev.sections:[]).flatMap(s=>(s.items||[]).filter(i=>i.fromChat).map(i=>({key:s.key,i})));
+  t.plan={summary:'',sections:keys.map(key=>({key,items:[],loading:true})),cites:[],at:new Date().toISOString(),model:S.settings.model,baseKey:baseQ(t)};
+  render();
+  let n=0,fails=0;
+  const worker=async()=>{while(n<keys.length){const idx=n++;const ok=await genSection(t,keys[idx],false,idx===0);if(!ok)fails++;}};
+  await Promise.all([worker(),worker(),worker()]);
+  delete busy[k];
+  if(fails===keys.length){t.plan=prev;aiErr(genSection.lastErr||new Error('Something went wrong'));save();render();return;}
+  for(const {key,i} of keepChat)addToPlan(t,key,i);
+  if(t.plan)delete t.plan.partial;
+  save();render();toast(fails?`Plan ready — ${fails} section${fails>1?'s':''} didn't load, tap Try again`:'Your plan is ready');
 }
 async function sendChat(t){
   const inp=$('#chat-in');const q=(inp&&inp.value||'').trim();if(!q)return;
-  t.chat.push({role:'user',text:q});busy['chat:'+t.id]=1;save();render();
+  t.chat.push({role:'user',text:q});if(inp)inp.value='';busy['chat:'+t.id]=1;save();render();
+  const b=baseQ(t);
   try{
     const hist=t.chat.slice(-8).map(m=>`${m.role==='user'?'Traveller':'Assistant'}: ${m.text}`).join('\n');
-    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+ctxPlan(t)+`\n\nCONVERSATION\n${hist}\n\nReply to the traveller's last message. Be concise (under 160 words), practical and specific to this trip. Plain text; use "- " at the start of a line for list items.`,maxTokens:1500,search:true});
-    t.chat.push({role:'ai',text:r.text.trim()||'(No answer — try rephrasing.)',cites:r.cites.slice(0,4)});save();
+    const r=await ai({prompt:ctxTrip(t)+ctxBookings(t)+ctxPlan(t)+`\n\nCONVERSATION\n${hist}\n\nReply to the traveller's last message in plain text: under 160 words, practical and specific to this trip, "- " at the start of a line for list items.
+Then, on a new final line, write RECS: followed by a JSON array of the specific places or things you recommended (max 6) so they can save them: [{"title":"name","detail":"one sentence","cat":"Food|Nightlife|Stay|Things to do|Getting around|Watch-outs","place":"name to search on a map, or empty"${b?`,"getting":"how far from where they're staying and how, e.g. 10 min walk"`:''}}]. Write RECS: [] if nothing specific.`,maxTokens:1800,search:true});
+    let text=r.text,recs=[];const at=text.lastIndexOf('RECS:');
+    if(at>=0){const tail=text.slice(at+5);text=text.slice(0,at);try{const a=tail.indexOf('['),z=tail.lastIndexOf(']');if(a>=0&&z>a)recs=JSON.parse(tail.slice(a,z+1));}catch(_){recs=[];}}
+    recs=(Array.isArray(recs)?recs:[]).filter(x=>x&&x.title).slice(0,6).map(x=>({title:String(x.title),detail:String(x.detail||''),cat:CATS.includes(x.cat)?x.cat:'Things to do',place:String(x.place||''),getting:String(x.getting||'')}));
+    t.chat.push({role:'ai',text:text.trim()||'(No answer — try rephrasing.)',recs,cites:r.cites.slice(0,4)});save();
   }catch(e){t.chat.pop();aiErr(e);delete busy['chat:'+t.id];render();const i=$('#chat-in');if(i)i.value=q;return;}
   delete busy['chat:'+t.id];render();
   const th=$('#chat-thread');if(th)th.lastElementChild?.scrollIntoView({block:'nearest'});
 }
+const recKey=r=>(SEC_CAT_KEY[r.cat]||'todo')+'|'+r.title;
 async function genReview(t){
   const k='review:'+t.id;if(busy[k])return;busy[k]=1;render();
   try{
@@ -683,7 +728,11 @@ function render(){
   if(!S.profile.onboarded&&R.v!=='onboard')R={v:'onboard'};
   const V={home:vHome,new:vNew,edit:vNew,trip:vTrip,wish:vWish,me:vMe,country:vCountry,settings:vSettings,onboard:vOnboard,ask:vAsk};
   let html;try{html=(V[R.v]||vHome)();}catch(e){console.error(e);html=`<section class="screen"><div class="empty"><b>Something went wrong</b>${esc(e.message)}</div><div style="margin-top:12px"><button class="btn block ghost" data-act="go" data-to="home">Back to trips</button></div></section>`;}
+  const keep={};for(const id of ['chat-in','cl-new']){const el=document.getElementById(id);if(el&&el.value)keep[id]=el.value;}
+  const ae=document.activeElement&&document.activeElement.id;
   $('#app').innerHTML=html;
+  for(const [id,v] of Object.entries(keep)){const el=document.getElementById(id);if(el&&!el.value)el.value=v;}
+  if(ae&&['chat-in','cl-new'].includes(ae)){const el=document.getElementById(ae);if(el)el.focus({preventScroll:true});}
   $('#tabbar').hidden=R.v==='onboard';
   $$('#tabbar .tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===TABFOR[R.v]));
   fillPhotos();
@@ -809,44 +858,45 @@ function keyCard(){return `<div class="card ai-card"><span class="badge ai">AI i
 function baseCard(t){
   const b=t.base;const q=baseQ(t);
   if(!b||!(b.name||b.area||b.link))return `<button class="nudge" data-act="baseSheet" data-id="${t.id}"><span class="em">🏠</span><div><b>Where are you staying?</b><span>Add a link or just the area — everything gets a distance and directions from there.</span></div></button>`;
-  const stale=t.plan&&(t.plan.baseKey||'')!==q&&q;
+  const stale=t.plan&&!t.plan.partial&&(t.plan.baseKey||'')!==q&&q;
   return `<div class="card me-card" style="margin-bottom:12px"><p class="eyebrow">Where you're staying</p><h3 style="margin-top:4px">${esc(b.name||b.area||hostOf(b.link)||'Your stay')}</h3>
     ${b.name&&b.area?`<p>${esc(b.area)}</p>`:''}${!q?`<p style="color:var(--warn)">Add the street or area to get distances.</p>`:''}
     <div class="foot"><span class="links">${ext(safeUrl(b.link),'Listing ↗')}${q?ext(mapsSearch(q),'Map ↗'):''}</span><button class="btn small ghost" data-act="baseSheet" data-id="${t.id}">Change</button></div>
     ${stale?`<p class="hint" style="margin-top:8px">Your plan was made before this was added. <button class="link" data-act="genPlan" data-id="${t.id}">Redo it with distances</button></p>`:''}</div>`;
 }
 function tPlan(t){
-  const b=busy['plan:'+t.id];let h=baseCard(t);
+  const full=busy['plan:'+t.id];let h=baseCard(t);const secs=t.plan?t.plan.sections:[];
   if(!S.settings.apiKey)h+=keyCard();
-  else if(!t.plan)h+=`<div class="card ai-card"><span class="badge ai">${ICON.spark} AI plan</span><h3 style="margin-top:8px">Plan ${esc(t.dest)}</h3><p>Where to stay, hotel vs Airbnb, getting there, food, things to do and watch-outs — built around ${esc(t.main.toLowerCase())}${t.who==='Solo'?' for a solo trip':''}.</p><button class="btn block" style="margin-top:12px" data-act="genPlan" data-id="${t.id}" ${b?'disabled':''}>${b?'<span class="spinner"></span> Planning… this can take a minute':'Generate my plan'}</button></div>`;
-  if(t.plan){
-    const secs=t.plan.sections;
-    h+=`${b?`<div class="nudge ai"><span class="spinner dark"></span><div><b>Re-planning…</b><span>This can take a minute.</span></div></div>`:''}
+  else if(!t.plan||t.plan.partial)h+=`<div class="card ai-card"><span class="badge ai">${ICON.spark} AI plan</span><h3 style="margin-top:8px">Plan ${esc(t.dest)}</h3><p>Where to stay, getting there, food, things to do and watch-outs — built around ${esc(String(t.main||'this trip').toLowerCase())}. Sections appear as each one's ready.</p><button class="btn block" style="margin-top:12px" data-act="genPlan" data-id="${t.id}">Generate my plan</button></div>`;
+  if(secs.length){
+    const ready=secs.filter(s=>!s.loading).length;
+    h+=`${full?`<div class="nudge ai"><span class="spinner dark"></span><div><b>Planning — ${ready} of ${secs.length} ready</b><span>Sections fill in below as they arrive.</span></div></div>`:''}
     ${t.plan.summary?`<div class="card ai-card"><span class="badge ai">${ICON.spark} AI suggests</span><p style="margin-top:8px;color:var(--ink)">${esc(t.plan.summary)}</p></div>`:''}
     <div class="qs">${secs.map(s=>`<button data-act="jump" data-k="${s.key}">${SEC[s.key].ic} ${SEC[s.key].t}</button>`).join('')}</div>
     ${secs.map(s=>secHtml(t,s)).join('')}
     ${t.plan.cites&&t.plan.cites.length?`<div class="section"><p class="lab">Sources the AI checked</p><div class="sources">${t.plan.cites.slice(0,10).map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.title)}</a>`).join('')}</div></div>`:''}
-    <p class="hint" style="margin-bottom:18px">Planned ${fmtD(t.plan.at.slice(0,10))}. AI can be wrong — check prices, times and official advice before you rely on them. <button class="link" data-act="genPlan" data-id="${t.id}">Redo the whole plan</button></p>`;
+    ${t.plan.at&&!t.plan.partial&&!full?`<p class="hint" style="margin-bottom:18px">Planned ${fmtD(t.plan.at.slice(0,10))}. AI can be wrong — check prices, times and official advice before you rely on them. <button class="link" data-act="genPlan" data-id="${t.id}">Redo the whole plan</button></p>`:''}`;
   }
   h+=chatHtml(t);return h;
 }
-function secHtml(t,s){const m=SEC[s.key];const b=busy['plan:'+t.id+':'+s.key];
-  return `<div class="sec" id="sec-${s.key}"><div class="sec-h"><h2>${m.ic} ${m.t}</h2><button class="mini" data-act="regen" data-id="${t.id}" data-k="${s.key}" ${b?'disabled':''}>${b?'<span class="spinner dark"></span>':'↻ Redo'}</button></div>
-  ${s.key==='watch'&&t.country?`<div class="official">Always check the latest official advice: <a href="${fcdoUrl(t.country)}" target="_blank" rel="noopener">FCDO travel advice for ${esc(cName(t.country))} →</a></div>`:''}
-  ${(s.items||[]).map((it,i)=>{const key=s.key+'|'+it.title;const sv=t.saved.some(x=>x.key===key);
-    const q=baseQ(t);const pl=it.place&&!['type','timing'].includes(s.key)?it.place:'';
-    return `<div class="card ai-card"><h3>${esc(it.title)}</h3><p>${esc(it.detail)}</p>${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
+function secHtml(t,s){const m=SEC[s.key];const b=busy['plan:'+t.id+':'+s.key];const full=busy['plan:'+t.id];
+  const head=`<div class="sec-h"><h2>${m.ic} ${m.t}</h2>${s.loading?'':`<button class="mini" data-act="regen" data-id="${t.id}" data-k="${s.key}" ${b||full?'disabled':''}>${b?'<span class="spinner dark"></span>':'↻ Redo'}</button>`}</div>`;
+  const q=baseQ(t);let body;
+  if(s.loading)body=`<div class="card ai-card"><p><span class="spinner dark"></span>&nbsp; Working on ${m.t.toLowerCase()}…</p></div>`;
+  else if(s.error&&!(s.items||[]).length)body=`<div class="card"><p>This section didn't load. <button class="link" data-act="regen" data-id="${t.id}" data-k="${s.key}">Try again</button></p></div>`;
+  else body=(s.items||[]).map((it,i)=>{const key=s.key+'|'+it.title;const sv=t.saved.some(x=>x.key===key);const pl=it.place&&!['type','timing'].includes(s.key)?it.place:'';
+    return `<div class="card ai-card">${it.fromChat?'<span class="badge ai" style="margin-bottom:8px">From your chat</span>':''}<h3>${esc(it.title)}</h3>${it.detail?`<p>${esc(it.detail)}</p>`:''}${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
     ${it.getting?`<p class="getting">${gIcon(it.getting)} ${esc(it.getting)} <span class="hint">from your stay · estimate</span></p>`:''}
-    <div class="foot"><span class="links">${pl?ext(mapsSearch(placeQ(t,pl)),'📍 '+esc(pl)+' ↗'):''}${pl&&q&&s.key!=='stay'?ext(mapsDir(q,placeQ(t,pl)),'Directions ↗'):''}</span><button class="btn small outline${sv?' on':''}" data-act="saveAi" data-id="${t.id}" data-k="${s.key}" data-i="${i}">${sv?'Saved ✓':'Save'}</button></div></div>`;}).join('')}</div>`;}
+    <div class="foot"><span class="links">${pl?ext(mapsSearch(placeQ(t,pl)),'📍 '+esc(pl)+' ↗'):''}${pl&&q&&s.key!=='stay'?ext(mapsDir(q,placeQ(t,pl)),'Directions ↗'):''}</span><button class="btn small outline${sv?' on':''}" data-act="saveAi" data-id="${t.id}" data-k="${s.key}" data-i="${i}">${sv?'Saved ✓':'Save'}</button></div></div>`;}).join('');
+  return `<div class="sec" id="sec-${s.key}">${head}${s.key==='watch'&&t.country?`<div class="official">Always check the latest official advice: <a href="${fcdoUrl(t.country)}" target="_blank" rel="noopener">FCDO travel advice for ${esc(cName(t.country))} →</a></div>`:''}${body}</div>`;}
 const gIcon=g=>/walk/i.test(g)&&!/(bus|train|tram|metro|taxi|ferry|drive|car)/i.test(g)?'🚶':/ferry|boat/i.test(g)?'⛴️':/taxi|drive|car|uber/i.test(g)?'🚕':'🚆';
 function fmtText(s){const lines=String(s||'').split('\n');let h='',inList=false;const inl=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
   for(const raw of lines){const l=raw.trim();if(/^[-•*]\s+/.test(l)){if(!inList){h+='<ul>';inList=true;}h+=`<li>${inl(l.replace(/^[-•*]\s+/,''))}</li>`;}else{if(inList){h+='</ul>';inList=false;}if(l)h+=`<p>${inl(l.replace(/^#+\s*/,''))}</p>`;}}
   if(inList)h+='</ul>';return h;}
 function chatHtml(t){const b=busy['chat:'+t.id];
   return `<div class="section" style="margin-top:8px">${sectionH('Ask about this trip')}
-  <div id="chat-thread">${t.chat.map(m=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
-  ${S.settings.apiKey?`<div class="ask-row"><input id="chat-in" placeholder="e.g. Is a day trip worth it?" enterkeyhint="send" autocomplete="off"><button class="btn" data-act="chat" data-id="${t.id}" ${b?'disabled':''}>Ask</button></div>${t.chat.length?`<p style="margin-top:8px"><button class="link" data-act="clearChat" data-id="${t.id}">Clear conversation</button></p>`:''}`:`<p class="hint">Add your API key in Settings to ask questions.</p>`}</div>`;}
-
+  <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${(m.recs||[]).length?`<div class="chat-recs"><p class="hint" style="margin-bottom:6px">Save to this trip — it goes into Saved and your plan:</p><div class="chips">${m.recs.map((r,ri)=>{const sv=t.saved.some(x=>x.key===recKey(r));return `<button class="chip${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'✓':'＋'} ${esc(r.title)}</button>`;}).join('')}</div></div>`:''}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
+  ${S.settings.apiKey?`<div class="ask-row"><input id="chat-in" placeholder="e.g. Where can we get good pizza?" enterkeyhint="send" autocomplete="off"><button class="btn" data-act="chat" data-id="${t.id}" ${b?'disabled':''}>Ask</button></div>${t.chat.length?`<p style="margin-top:8px"><button class="link" data-act="clearChat" data-id="${t.id}">Clear conversation</button></p>`:''}`:`<p class="hint">Add your API key in Settings to ask questions.</p>`}</div>`;}
 function tSaved(t){
   const open=started(t);
   let h=`<div class="btn-row" style="margin-bottom:10px"><button class="btn small ghost" data-act="tipSheet" data-id="${t.id}" data-src="friend">+ Friend's tip</button><button class="btn small ghost" data-act="tipSheet" data-id="${t.id}" data-src="me">+ My idea</button><button class="btn small ghost" data-act="go" data-to="ask/${t.id}">Ask friends</button></div>`;
@@ -983,7 +1033,7 @@ function vSettings(){
     <div class="card"><p><b style="color:var(--ink)">iPhone:</b> open this page in Safari → Share → Add to Home Screen. Set things up inside the home-screen app, not the Safari tab — they keep separate data.</p><p style="margin-top:8px"><b style="color:var(--ink)">Android:</b> in Chrome, tap ⋮ → Install app.</p></div>
   </div>
   <div class="section">${sectionH('Danger zone')}<button class="btn block danger" data-act="reset">Delete everything</button></div>
-  <p class="hint" style="text-align:center">Hindsight · travel with hindsight · 1.3</p>
+  <p class="hint" style="text-align:center">Hindsight · travel with hindsight · 1.4</p>
   </section>`;
 }
 
@@ -1165,6 +1215,10 @@ const A={
   regen:el=>{const t=trip(el.dataset.id);if(t)genPlan(t,el.dataset.k);},
   saveAi:el=>{const t=trip(el.dataset.id);const s=t.plan.sections.find(x=>x.key===el.dataset.k);const it=s.items[+el.dataset.i];const key=s.key+'|'+it.title;const i=t.saved.findIndex(x=>x.key===key);
     if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}else{t.saved.push({id:uid(),key,cat:SEC[s.key].cat,title:it.title,detail:it.detail,place:it.place||'',getting:it.getting||'',src:'ai',state:''});toast('Saved to this trip');}save();render();},
+  saveChatRec:el=>{const t=trip(el.dataset.id);const r=t.chat[+el.dataset.m].recs[+el.dataset.r];const key=recKey(r);const sk=key.split('|')[0];const i=t.saved.findIndex(x=>x.key===key);
+    if(i>=0){t.saved.splice(i,1);removeFromPlan(t,sk,r.title);toast('Removed from Saved');}
+    else{t.saved.push({id:uid(),key,cat:SEC[sk].cat,title:r.title,detail:r.detail,place:r.place,getting:r.getting,src:'ai',state:''});addToPlan(t,sk,{title:r.title,detail:r.detail,why:'',place:r.place,getting:r.getting,fromChat:true});toast('Saved — also added to your plan under '+SEC[sk].t);}
+    save();render();},
   route:el=>{const t=trip(el.dataset.id);const s=t&&t.saved.find(x=>x.id===el.dataset.s);if(s)routeFor(t,s);},
   baseSheet:el=>{const t=trip(el.dataset.id);const b=t.base||{};D.base={trip:t.id,dest:t.dest,name:b.name||'',link:b.link||'',area:b.area||'',note:''};openSheet(baseSheetR);},
   findBase:()=>findBase(),
