@@ -162,11 +162,13 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .purpose span{font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3)}
 .purpose span.main{background:#fff;color:#1B1F24;border-color:#fff}
 .status-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 0 4px;font-size:13px;color:var(--ink-2)}
-.tv-nav{display:flex;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);margin:8px -16px 16px;padding:0 10px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--surface);z-index:6}
+.tv-bar{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--line);margin:8px -16px 16px;padding:0 10px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--surface);z-index:6}
+.tv-nav{display:flex;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
 .tv-nav::-webkit-scrollbar{display:none}
 .tv-nav button{flex:0 0 auto;padding:13px 10px;font-weight:600;font-size:14px;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
 .tv-nav button.on{color:var(--ink);border-bottom-color:var(--ink)}
 .tv-nav .ct{font-size:11px;background:var(--surface-2);color:var(--ink-2);padding:1px 6px;border-radius:999px;margin-left:4px;font-variant-numeric:tabular-nums}
+.ask-fab{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:7px 12px;border-radius:999px;background:var(--ai-soft);color:var(--ink);font-weight:600;font-size:13px;white-space:nowrap;margin:8px 0}
 .qs{display:flex;gap:8px;overflow-x:auto;margin:0 -16px 14px;padding:0 16px 4px;scrollbar-width:none}
 .qs::-webkit-scrollbar{display:none}
 .qs button{flex:0 0 auto;padding:7px 12px;border-radius:999px;border:1.5px solid var(--line);font-size:13px;font-weight:500;white-space:nowrap;color:var(--ink-2)}
@@ -209,6 +211,11 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .item .x{color:var(--ink-3);font-size:18px;padding:0 4px;line-height:1}
 .item[data-act]{cursor:pointer}
 .item .chev{color:var(--ink-3);font-size:18px;flex:0 0 auto;align-self:center}
+.swipe{position:relative;overflow:hidden;border-radius:var(--radius);margin-bottom:12px}
+.swipe .card{margin-bottom:0;border-radius:var(--radius)}
+.swipe-del{position:absolute;inset:0;background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:flex-end;padding-right:26px;font-weight:700;font-size:14px}
+.swipe-body{position:relative;background:var(--bg);touch-action:pan-y}
+.swipe-body.anim{transition:transform .18s ease}
 .rate{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .rate button{padding:6px 10px;border-radius:999px;border:1.5px solid var(--line);font-size:12px;font-weight:600}
 .rate button.on{border-color:var(--com);background:var(--com-soft);color:var(--com-ink)}
@@ -888,7 +895,7 @@ function vTrip(){
     <div class="purpose"><span class="main">Main: ${esc(t.main)}</span>${(t.extras||[]).filter(x=>x!==t.main).map(x=>`<span>+ ${esc(x)}</span>`).join('')}${t.occasion&&t.occasion!=='None'?`<span>${esc(t.occasion)}</span>`:''}</div>
   </div>
   <div class="status-line"><button class="${stCls(s)}" data-act="statusSheet" data-id="${t.id}">${s}</button>${t.event?`<span>${esc(t.event)}</span>`:''}</div>
-  <nav class="tv-nav">${tabs.map(([k,l,c])=>`<button class="${tab===k?'on':''}" data-act="tab" data-id="${t.id}" data-tab="${k}">${l}${c!==''&&c!==0?`<span class="ct">${c}</span>`:''}</button>`).join('')}</nav>
+  <div class="tv-bar"><nav class="tv-nav">${tabs.map(([k,l,c])=>`<button class="${tab===k?'on':''}" data-act="tab" data-id="${t.id}" data-tab="${k}">${l}${c!==''&&c!==0?`<span class="ct">${c}</span>`:''}</button>`).join('')}</nav><button class="ask-fab" data-act="askJump" data-id="${t.id}">💬 Ask</button></div>
   ${(V[tab]||tPlan)(t)}
   </section>`;
 }
@@ -904,6 +911,7 @@ function baseCard(t){
 }
 function tPlan(t){
   const full=busy['plan:'+t.id];let h=baseCard(t);const secs=t.plan?t.plan.sections:[];
+  h+=chatHtml(t);
   if(!S.settings.apiKey)h+=keyCard();
   else if(!t.plan||t.plan.partial)h+=`<div class="card ai-card"><span class="badge ai">${ICON.spark} AI plan</span><h3 style="margin-top:8px">Plan ${esc(t.dest)}</h3><p>Where to stay, getting there, food, things to do and watch-outs — built around ${esc(String(t.main||'this trip').toLowerCase())}. Sections appear as each one's ready.</p><button class="btn block" style="margin-top:12px" data-act="genPlan" data-id="${t.id}">Generate my plan</button></div>`;
   if(secs.length){
@@ -915,17 +923,23 @@ function tPlan(t){
     ${t.plan.cites&&t.plan.cites.length?`<div class="section"><p class="lab">Sources the AI checked</p><div class="sources">${t.plan.cites.slice(0,10).map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.title)}</a>`).join('')}</div></div>`:''}
     ${t.plan.at&&!t.plan.partial&&!full?`<p class="hint" style="margin-bottom:18px">Planned ${fmtD(t.plan.at.slice(0,10))}. AI can be wrong — check prices, times and official advice before you rely on them. <button class="link" data-act="genPlan" data-id="${t.id}">Redo the whole plan</button></p>`:''}`;
   }
-  h+=chatHtml(t);return h;
+  return h;
 }
 function secHtml(t,s){const m=SEC[s.key];const b=busy['plan:'+t.id+':'+s.key];const full=busy['plan:'+t.id];
   const head=`<div class="sec-h"><h2>${m.ic} ${m.t}</h2>${s.loading?'':`<button class="mini" data-act="regen" data-id="${t.id}" data-k="${s.key}" ${b||full?'disabled':''}>${b?'<span class="spinner dark"></span>':'↻ Redo'}</button>`}</div>`;
-  const q=baseQ(t);let body;
+  const q=baseQ(t);let body;let savedN=0;
   if(s.loading)body=`<div class="card ai-card"><p><span class="spinner dark"></span>&nbsp; Working on ${m.t.toLowerCase()}…</p></div>`;
   else if(s.error&&!(s.items||[]).length)body=`<div class="card"><p>This section didn't load. <button class="link" data-act="regen" data-id="${t.id}" data-k="${s.key}">Try again</button></p></div>`;
-  else body=(s.items||[]).map((it,i)=>{const key=s.key+'|'+it.title;const sv=t.saved.some(x=>x.key===key);const pl=it.place&&!['type','timing'].includes(s.key)?it.place:'';
-    return `<div class="card ai-card">${it.fromChat?'<span class="badge ai" style="margin-bottom:8px">From your chat</span>':''}<h3>${esc(it.title)}</h3>${it.detail?`<p>${esc(it.detail)}</p>`:''}${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
-    ${it.getting?`<p class="getting">${gIcon(it.getting)} ${esc(it.getting)} <span class="hint">from your stay · estimate</span></p>`:''}
-    <div class="foot"><span class="links">${pl?ext(mapsSearch(placeQ(t,pl)),'📍 '+esc(pl)+' ↗'):''}${pl&&q&&s.key!=='stay'?ext(mapsDir(q,placeQ(t,pl)),'Directions ↗'):''}</span><button class="btn small outline${sv?' on':''}" data-act="saveAi" data-id="${t.id}" data-k="${s.key}" data-i="${i}">${sv?'Saved ✓':'Save'}</button></div></div>`;}).join('');
+  else{
+    body=(s.items||[]).map((it,i)=>{const key=s.key+'|'+it.title;const sv=t.saved.some(x=>x.key===key);
+      if(sv){savedN++;return '';}
+      const pl=it.place&&!['type','timing'].includes(s.key)?it.place:'';
+      return `<div class="swipe"><div class="swipe-del" data-act="dismissPlanItem" data-id="${t.id}" data-k="${s.key}" data-i="${i}">Dismiss</div><div class="swipe-body"><div class="card ai-card">${it.fromChat?'<span class="badge ai" style="margin-bottom:8px">From your chat</span>':''}<h3>${esc(it.title)}</h3>${it.detail?`<p>${esc(it.detail)}</p>`:''}${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
+      ${it.getting?`<p class="getting">${gIcon(it.getting)} ${esc(it.getting)} <span class="hint">from your stay · estimate</span></p>`:''}
+      <div class="foot"><span class="links">${pl?ext(mapsSearch(placeQ(t,pl)),'📍 '+esc(pl)+' ↗'):''}${pl&&q&&s.key!=='stay'?ext(mapsDir(q,placeQ(t,pl)),'Directions ↗'):''}</span><button class="btn small outline" data-act="saveAi" data-id="${t.id}" data-k="${s.key}" data-i="${i}">Save</button></div></div></div></div>`;}).join('');
+    if(savedN)body=`<p class="hint" style="margin-bottom:10px">${savedN} saved to Saved — <button class="link" data-act="go" data-to="trip/${t.id}/saved">view</button></p>`+body;
+    if(!body)body=`<div class="card"><p>All saved. <button class="link" data-act="go" data-to="trip/${t.id}/saved">View in Saved</button></p></div>`;
+  }
   return `<div class="sec" id="sec-${s.key}">${head}${s.key==='watch'&&t.country?`<div class="official">Always check the latest official advice: <a href="${fcdoUrl(t.country)}" target="_blank" rel="noopener">FCDO travel advice for ${esc(cName(t.country))} →</a></div>`:''}${body}</div>`;}
 const gIcon=g=>/walk/i.test(g)&&!/(bus|train|tram|metro|taxi|ferry|drive|car)/i.test(g)?'🚶':/ferry|boat/i.test(g)?'⛴️':/taxi|drive|car|uber/i.test(g)?'🚕':'🚆';
 function fmtText(s){const lines=String(s||'').split('\n');let h='',inList=false;const inl=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
@@ -942,7 +956,7 @@ function recCardsHtml(t,recs,mi){
   return h+'</div>';
 }
 function chatHtml(t){const b=busy['chat:'+t.id];
-  return `<div class="section" style="margin-top:8px">${sectionH('Ask about this trip')}
+  return `<div class="section" id="ask-box" style="margin-top:8px">${sectionH('Ask about this trip')}
   <div id="chat-thread">${t.chat.map((m,mi)=>m.role==='user'?`<div class="bubble me">${esc(m.text)}</div>`:`<div class="bubble ai">${fmtText(m.text)}${m.cites&&m.cites.length?`<div class="sources" style="margin-top:6px">${m.cites.map(c=>`<a href="${esc(c.url)}" target="_blank" rel="noopener">↗ ${esc(c.title)}</a>`).join('')}</div>`:''}</div>${recCardsHtml(t,m.recs,mi)}`).join('')}${b?`<div class="bubble ai"><span class="spinner dark"></span></div>`:''}</div>
   ${S.settings.apiKey?`<div class="ask-row"><input id="chat-in" placeholder="e.g. Where can we get good pizza?" enterkeyhint="send" autocomplete="off"><button class="btn" data-act="chat" data-id="${t.id}" ${b?'disabled':''}>Ask</button></div>${t.chat.length?`<p style="margin-top:8px"><button class="link" data-act="clearChat" data-id="${t.id}">Clear conversation</button></p>`:''}`:`<p class="hint">Add your API key in Settings to ask questions.</p>`}</div>`;}
 let SFILT={};
@@ -1298,11 +1312,14 @@ const A={
     S.trips.push(t);save(true);D.trip={};nav(`trip/${t.id}/plan`);if(S.settings.apiKey)genPlan(t);},
   openTrip:el=>{if(!el.dataset.id)return nav('home');nav(`trip/${el.dataset.id}/${el.dataset.tab||'plan'}`);},
   tab:el=>{R.tab=el.dataset.tab;history.replaceState(null,'',`#/trip/${el.dataset.id}/${el.dataset.tab}`);render();const n=$('.tv-nav');if(n&&n.getBoundingClientRect().top<0)n.scrollIntoView();},
+  askJump:el=>{const id=el.dataset.id;const go=()=>{const box=$('#ask-box');if(box)box.scrollIntoView({behavior:'smooth',block:'start'});const i=$('#chat-in');if(i)setTimeout(()=>i.focus(),300);};
+    if(R.v!=='trip'||R.id!==id||R.tab!=='plan'){R.tab='plan';history.replaceState(null,'',`#/trip/${id}/plan`);render();requestAnimationFrame(go);}else go();},
   jump:el=>{const s=document.getElementById('sec-'+el.dataset.k);if(s)s.scrollIntoView({behavior:'smooth'});},
   genPlan:el=>{const t=trip(el.dataset.id);if(t)genPlan(t);},
   regen:el=>{const t=trip(el.dataset.id);if(t)genPlan(t,el.dataset.k);},
   saveAi:el=>{const t=trip(el.dataset.id);const s=t.plan.sections.find(x=>x.key===el.dataset.k);const it=s.items[+el.dataset.i];const key=s.key+'|'+it.title;const i=t.saved.findIndex(x=>x.key===key);
-    if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}else{t.saved.push({id:uid(),key,cat:SEC[s.key].cat,title:it.title,detail:it.detail,place:it.place||'',getting:it.getting||'',src:'ai',state:'',more:'',review:'',inPlan:false});toast('Saved to this trip');}save();render();},
+    if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}else{t.saved.push({id:uid(),key,cat:SEC[s.key].cat,title:it.title,detail:it.detail,place:it.place||'',getting:it.getting||'',src:'ai',state:'',more:'',review:'',inPlan:false});toast('Saved to Saved');}save();render();},
+  dismissPlanItem:el=>{const t=trip(el.dataset.id);const s=t.plan&&t.plan.sections.find(x=>x.key===el.dataset.k);if(s){s.items=(s.items||[]).filter((_,idx)=>idx!==+el.dataset.i);save();render();}},
   saveChatRec:el=>{const t=trip(el.dataset.id);const r=t.chat[+el.dataset.m].recs[+el.dataset.r];const key=recKey(r);const sk=key.split('|')[0];const i=t.saved.findIndex(x=>x.key===key);
     if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}
     else{t.saved.push({id:uid(),key,cat:SEC[sk].cat,title:r.title,detail:r.detail,place:r.place,getting:r.getting,src:'ai',state:'',more:'',review:'',inPlan:false});toast('Saved — tap it to add it to your plan when you\'re ready');}
@@ -1398,6 +1415,26 @@ const A={
   reset:async()=>{if(!confirm('Delete all trips, places, photos and settings from this phone? This can\'t be undone.'))return;if(!confirm('Really delete everything?'))return;try{if(DB.db){await DB.clear('kv');await DB.clear('photos');}localStorage.removeItem('wayfarer');}catch(_){}S=defaults();D.ob={};obStep=0;nav('onboard');}
 };
 document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(!el)return;const f=A[el.dataset.act];if(f){e.preventDefault();f(el,e);}});
+let SWP=null;
+document.addEventListener('touchstart',e=>{
+  const el=e.target.closest('.swipe-body');
+  document.querySelectorAll('.swipe-body.open').forEach(x=>{if(x!==el){x.classList.remove('open','anim');x.style.transform='';}});
+  if(!el)return;
+  if(el.classList.contains('open')){el.classList.add('anim');el.classList.remove('open');el.style.transform='';SWP=null;return;}
+  SWP={el,startX:e.touches[0].clientX,dx:0};el.classList.remove('anim');
+},{passive:true});
+document.addEventListener('touchmove',e=>{
+  if(!SWP)return;
+  const dx=e.touches[0].clientX-SWP.startX;
+  if(dx>4){SWP=null;return;}
+  SWP.dx=dx;SWP.el.style.transform=`translateX(${Math.max(dx,-96)}px)`;
+},{passive:true});
+document.addEventListener('touchend',()=>{
+  if(!SWP)return;const {el,dx}=SWP;el.classList.add('anim');
+  if(dx<-56){el.style.transform='translateX(-96px)';el.classList.add('open');}
+  else{el.style.transform='';el.classList.remove('open');}
+  SWP=null;
+});
 $('#file-photos').addEventListener('change',async e=>{const files=[...e.target.files];if(!files.length)return;toast('Adding photos…');const ids=await storePhotos(files);D.log.photos.push(...ids);D.log.newPhotos.push(...ids);drawSheet();});
 $('#file-import').addEventListener('change',e=>{const f=e.target.files[0];if(f)importData(f);});
 
