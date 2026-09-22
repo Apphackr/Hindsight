@@ -955,9 +955,23 @@ function baseCard(t){
     <div class="foot"><span class="links">${ext(safeUrl(b.link),'Listing ↗')}${q?ext(mapsSearch(q),'Map ↗'):''}</span><button class="btn small ghost" data-act="baseSheet" data-id="${t.id}">Change</button></div>
     ${stale?`<p class="hint" style="margin-top:8px">Your plan was made before this was added. <button class="link" data-act="genPlan" data-id="${t.id}">Redo it with distances</button></p>`:''}</div>`;
 }
+function planItemsHtml(t){
+  const items=t.saved.filter(x=>x.inPlan);
+  if(!items.length)return `<div class="section"><div class="sec-h"><h2>📌 Your plan</h2></div><div class="empty"><b>Nothing committed yet</b>Save things you like, then tap "+ Add to plan" on them (from Saved, or the place page) to build your plan here.</div></div>`;
+  const cats=[...new Set(items.map(s=>s.cat))];
+  let h=`<div class="section"><div class="sec-h"><h2>📌 Your plan</h2><button class="mini" data-act="go" data-to="trip/${t.id}/itin">Itinerary →</button></div>`;
+  for(const c of cats){
+    h+=`<p class="group-h">${CAT_IC[c]||'•'} ${esc(c)}</p>`;
+    for(const s of items.filter(x=>x.cat===c)){
+      h+=`<div class="item" data-act="go" data-to="trip/${t.id}/place/${s.id}"><div class="body"><div class="t">${esc(s.title)}</div>${s.state?`<div class="s">${LOOP_RATE[s.state]}</div>`:''}${s.detail?`<div class="d">${esc(s.detail)}</div>`:''}</div><span class="chev">${ICON.chev||'›'}</span></div>`;
+    }
+  }
+  return h+'</div>';
+}
 function tPlan(t){
   const full=busy['plan:'+t.id];let h=baseCard(t);const secs=t.plan?t.plan.sections:[];
   h+=chatHtml(t);
+  h+=planItemsHtml(t);
   if(!S.settings.apiKey)h+=keyCard();
   else if(!t.plan||t.plan.partial)h+=`<div class="card ai-card"><span class="badge ai">${ICON.spark} AI plan</span><h3 style="margin-top:8px">Plan ${esc(t.dest)}</h3><p>Where to stay, getting there, food, things to do and watch-outs — built around ${esc(String(t.main||'this trip').toLowerCase())}. Sections appear as each one's ready.</p><button class="btn block" style="margin-top:12px" data-act="genPlan" data-id="${t.id}">Generate my plan</button></div>`;
   if(secs.length){
