@@ -458,13 +458,13 @@ const DB={db:null,
   clear(s){return this.req(s,'readwrite',o=>o.clear());},
   entries(s){return new Promise((res,rej)=>{const out=[];const tx=this.db.transaction(s,'readonly');const c=tx.objectStore(s).openCursor();c.onsuccess=()=>{const cur=c.result;if(cur){out.push([cur.key,cur.value]);cur.continue();}};tx.oncomplete=()=>res(out);tx.onerror=()=>rej(tx.error);});}
 };
-const defaults=()=>({v:1,profile:{name:'',home:'',styles:[],regions:[],stay:'No preference',langs:{},onboarded:false},countries:{},trips:[],wishlist:[],settings:{apiKey:'',model:'claude-sonnet-5',webSearch:true,lastExport:''}});
+const defaults=()=>({v:1,profile:{name:'',home:'',styles:[],regions:[],stay:'No preference',langs:{},onboarded:false},countries:{},trips:[],wishlist:[],settings:{apiKey:'',model:'claude-sonnet-5',webSearch:true,lastExport:'',notify:false}});
 let S=defaults();
 function normalize(s){
   const d=defaults();const o=Object.assign(d,s||{});
   o.profile=Object.assign(defaults().profile,o.profile||{});
   o.settings=Object.assign(defaults().settings,o.settings||{});
-  o.trips=(o.trips||[]).map(t=>Object.assign({saved:[],bookings:[],log:[],chat:[],extras:[],checklist:null,plan:null,itinerary:null,review:null,statusOverride:'',budgetAmount:'',base:null},t));
+  o.trips=(o.trips||[]).map(t=>Object.assign({saved:[],bookings:[],log:[],chat:[],extras:[],checklist:null,plan:null,itinerary:null,review:null,statusOverride:'',budgetAmount:'',base:null,travelExtras:{lounge:'',parking:''},notifiedDays:[],checklistNotifiedAt:''},t));
   o.wishlist=o.wishlist||[];o.countries=o.countries||{};
   // older versions stored past visits inside the country — turn them into past trips
   for(const [c,v] of Object.entries(o.countries)){
@@ -557,6 +557,8 @@ TRIP
 - Travelling from: ${t.origin||S.profile.home||'UK'}
 - Staying at: ${t.base&&(t.base.name||t.base.area||t.base.link)?[t.base.name,t.base.area,t.base.link].filter(Boolean).join(' — '):'not booked yet'}
 - Specific plans: ${t.event||'none'}
+- Airport lounge: ${t.travelExtras&&t.travelExtras.lounge?t.travelExtras.lounge:'not decided'}
+- Airport parking: ${t.travelExtras&&t.travelExtras.parking?t.travelExtras.parking:'not decided'}
 - Notes: ${t.notes||'none'}${priorLogs(t)}`;
 }
 function priorLogs(t){if(!t.country)return '';const p=S.trips.filter(x=>x.id!==t.id&&x.country===t.country).flatMap(x=>x.log.map(l=>`${l.name} (${x.dest}, ${l.type.toLowerCase()}${l.rating?', '+(LOG_RATE[l.rating]||'').replace(/^\S+\s/,'').toLowerCase():''})`)).slice(0,20);
@@ -730,6 +732,50 @@ async function moreInfo(t,s){
     s.more=r.text.trim();save();
   }catch(e){aiErr(e);}finally{delete busy[k];render();}
 }
+async function sugMore(){
+  const d=D.sug;const t=trip(d.trip);if(!t)return;const k='sugmore';if(busy[k])return;busy[k]=1;drawSheet();
+  try{
+    const r=await ai({prompt:`A traveller is deciding on "${d.title}"${d.place?` (${d.place})`:''} for a trip to ${t.dest}${t.country?', '+cName(t.country):''}. Based on real reviews you can find online, write 2-3 short sentences: what people consistently praise, and one practical thing to know before going (booking needed, queues, price level, best time to go). Be honest if opinions are mixed. Plain text, no headings, no markdown.`,maxTokens:400,search:true});
+    d.more=r.text.trim();
+  }catch(e){aiErr(e);}finally{delete busy[k];drawSheet();}
+}
+async function notify(title,body){
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  try{const reg='serviceWorker' in navigator?await navigator.serviceWorker.getRegistration():null;
+    if(reg&&reg.showNotification)reg.showNotification(title,{body,icon:'./icon-192.png',badge:'./icon-192.png'});
+    else new Notification(title,{body,icon:'./icon-192.png'});
+  }catch(e){}
+}
+const NOTIFY_DAYS=[30,14,7,3,1,0];
+function checkReminders(){
+  if(!S.settings.notify)return;
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  const td=today();let changed=false;
+  for(const t of S.trips){
+    if(t.kind==='past'||!t.datesKnown||!t.from||t.from<td)continue;
+    const d=daysBetween(td,t.from);
+    t.notifiedDays=t.notifiedDays||[];
+    if(NOTIFY_DAYS.includes(d)&&!t.notifiedDays.includes(d)){
+      t.notifiedDays.push(d);changed=true;
+      notify(`${t.dest} — ${d===0?'today!':d===1?'tomorrow':`${d} days to go`}`,d===0?'Have a brilliant trip.':'Open Hindsight to check your plan and checklist.');
+    }
+    if(d<=7&&t.checklist&&t.checklist.some(i=>!i.done)&&t.checklistNotifiedAt!==td){
+      t.checklistNotifiedAt=td;changed=true;
+      const left=t.checklist.filter(i=>!i.done).length;
+      notify(`${t.dest} checklist — ${left} thing${left===1?'':'s'} left`,'Tap to finish getting ready.');
+    }
+  }
+  if(changed)save();
+}
+async function requestNotify(){
+  if(!('Notification' in window)){toast('Notifications aren\'t supported in this browser');S.settings.notify=false;save();render();return;}
+  if(Notification.permission==='granted'){checkReminders();return;}
+  if(Notification.permission==='denied'){toast('Notifications are blocked — allow them for this app in your phone settings');S.settings.notify=false;save();render();return;}
+  const p=await Notification.requestPermission();
+  if(p!=='granted'){S.settings.notify=false;save();toast('Notifications need to be allowed to work');}
+  else{toast('Notifications on');checkReminders();}
+  render();
+}
 async function findMatch(){
   const b=D.book;if(!String(b.title||'').trim())return toast('Add the two teams first, e.g. "Como vs Man Utd"');
   busy.match=1;drawSheet();
@@ -766,7 +812,7 @@ let R={v:'home',id:null,tab:null,sub:null};
 function parse(){const h=location.hash.replace(/^#\/?/,'').split('/');R={v:h[0]||'home',id:h[1]||null,tab:h[2]||null,sub:h[3]||null};}
 function nav(p){if(location.hash==='#/'+p){parse();render();}else location.hash='#/'+p;}
 window.addEventListener('hashchange',()=>{parse();render();window.scrollTo(0,0);});
-const D={ob:{},trip:{},book:{},log:{},tip:{},wish:{},ask:{cat:'Food',sel:{},note:''},cs:{q:''},cv:{},place:{q:''},past:{},base:{}};
+const D={ob:{},trip:{},book:{},log:{},tip:{},wish:{},ask:{cat:'Food',sel:{},note:''},cs:{q:''},cv:{},place:{q:''},past:{},base:{},sug:{}};
 const TABFOR={home:'home',trip:'home',new:'home',edit:'home',ask:'home',wish:'wish',me:'me',country:'me',settings:'settings'};
 function render(){
   if(!S.profile.onboarded&&R.v!=='onboard')R={v:'onboard'};
@@ -934,7 +980,7 @@ function secHtml(t,s){const m=SEC[s.key];const b=busy['plan:'+t.id+':'+s.key];co
     body=(s.items||[]).map((it,i)=>{const key=s.key+'|'+it.title;const sv=t.saved.some(x=>x.key===key);
       if(sv){savedN++;return '';}
       const pl=it.place&&!['type','timing'].includes(s.key)?it.place:'';
-      return `<div class="swipe"><div class="swipe-del" data-act="dismissPlanItem" data-id="${t.id}" data-k="${s.key}" data-i="${i}">Dismiss</div><div class="swipe-body"><div class="card ai-card">${it.fromChat?'<span class="badge ai" style="margin-bottom:8px">From your chat</span>':''}<h3>${esc(it.title)}</h3>${it.detail?`<p>${esc(it.detail)}</p>`:''}${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
+      return `<div class="swipe"><div class="swipe-del" data-act="dismissPlanItem" data-id="${t.id}" data-k="${s.key}" data-i="${i}">Dismiss</div><div class="swipe-body"><div class="card ai-card" data-act="openSug" data-src="sec" data-id="${t.id}" data-k="${s.key}" data-i="${i}">${it.fromChat?'<span class="badge ai" style="margin-bottom:8px">From your chat</span>':''}<h3>${esc(it.title)}</h3>${it.detail?`<p>${esc(it.detail)}</p>`:''}${it.why?`<div class="why"><b>For you:</b> ${esc(it.why)}</div>`:''}
       ${it.getting?`<p class="getting">${gIcon(it.getting)} ${esc(it.getting)} <span class="hint">from your stay · estimate</span></p>`:''}
       <div class="foot"><span class="links">${pl?ext(mapsSearch(placeQ(t,pl)),'📍 '+esc(pl)+' ↗'):''}${pl&&q&&s.key!=='stay'?ext(mapsDir(q,placeQ(t,pl)),'Directions ↗'):''}</span><button class="btn small outline" data-act="saveAi" data-id="${t.id}" data-k="${s.key}" data-i="${i}">Save</button></div></div></div></div>`;}).join('');
     if(savedN)body=`<p class="hint" style="margin-bottom:10px">${savedN} saved to Saved — <button class="link" data-act="go" data-to="trip/${t.id}/saved">view</button></p>`+body;
@@ -946,7 +992,7 @@ function fmtText(s){const lines=String(s||'').split('\n');let h='',inList=false;
   for(const raw of lines){const l=raw.trim();if(/^[-•*]\s+/.test(l)){if(!inList){h+='<ul>';inList=true;}h+=`<li>${inl(l.replace(/^[-•*]\s+/,''))}</li>`;}else{if(inList){h+='</ul>';inList=false;}if(l)h+=`<p>${inl(l.replace(/^#+\s*/,''))}</p>`;}}
   if(inList)h+='</ul>';return h;}
 function recCard(t,r,ri,mi){const sv=t.saved.some(x=>x.key===recKey(r));
-  return `<div class="card ai-card rec-card"><h3>${esc(r.title)}</h3>${r.detail?`<p>${esc(r.detail)}</p>`:''}${r.getting?`<p class="getting">${gIcon(r.getting)} ${esc(r.getting)}</p>`:''}<div class="foot"><span></span><button class="btn small outline${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'Saved ✓':'Save'}</button></div></div>`;}
+  return `<div class="card ai-card rec-card" data-act="openSug" data-src="chat" data-id="${t.id}" data-m="${mi}" data-r="${ri}"><h3>${esc(r.title)}</h3>${r.detail?`<p>${esc(r.detail)}</p>`:''}${r.getting?`<p class="getting">${gIcon(r.getting)} ${esc(r.getting)}</p>`:''}<div class="foot"><span></span><button class="btn small outline${sv?' on':''}" data-act="saveChatRec" data-id="${t.id}" data-m="${mi}" data-r="${ri}">${sv?'Saved ✓':'Save'}</button></div></div>`;}
 function recCardsHtml(t,recs,mi){
   if(!recs||!recs.length)return '';
   const cats=[...new Set(recs.map(r=>r.cat))];
@@ -1037,13 +1083,16 @@ function tBook(t){
   return h;
 }
 const BASIC_CHECK=[['Documents','Passport (check expiry)'],['Documents','Travel insurance'],['Documents','GHIC card (EU trips)'],['Money','Some local cash'],['Money','Card with no foreign fees'],['Packing','Chargers and plug adaptor'],['Packing','Any medication'],['Before you go','Check official travel advice'],['Before you go','Download offline maps'],['Before you go','Check in online']];
+function extrasCard(t){const ex=t.travelExtras||{lounge:'',parking:''};
+  const row=(k,l)=>`<div class="list-row"><span>${esc(l)}</span><div class="chips">${['yes','no'].map(v=>`<button class="chip${ex[k]===v?' on':''}" data-act="setExtra" data-id="${t.id}" data-k="${k}" data-v="${v}">${v==='yes'?'Yes':'No'}</button>`).join('')}</div></div>`;
+  return `<div class="card" style="margin-bottom:16px"><p class="eyebrow">Travel extras</p>${row('lounge','Airport lounge')}${row('parking','Airport parking')}</div>`;}
 function tCheck(t){
   const b=busy['check:'+t.id];
-  if(!t.checklist||!t.checklist.length)return `<div class="card ai-card"><span class="badge ai">${ICON.spark} Checklist</span><h3 style="margin-top:8px">A checklist for this trip</h3><p>Documents and entry rules, money, things specific to ${esc(t.main.toLowerCase())}, packing for the weather on your dates, and what to book before you go.</p>
+  if(!t.checklist||!t.checklist.length)return extrasCard(t)+`<div class="card ai-card"><span class="badge ai">${ICON.spark} Checklist</span><h3 style="margin-top:8px">A checklist for this trip</h3><p>Documents and entry rules, money, things specific to ${esc(t.main.toLowerCase())}, packing for the weather on your dates, and what to book before you go.</p>
     ${S.settings.apiKey?`<button class="btn block" style="margin-top:12px" data-act="genCheck" data-id="${t.id}" ${b?'disabled':''}>${b?'<span class="spinner"></span> Building…':'Build it with AI'}</button>`:''}
     <button class="btn block ghost" style="margin-top:8px" data-act="basicCheck" data-id="${t.id}">Start with a basic list</button></div>`;
   const done=t.checklist.filter(i=>i.done).length;const groups=[...new Set(t.checklist.map(i=>i.g))];
-  return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="small muted" style="white-space:nowrap">${done} of ${t.checklist.length} done</span><div class="lvl" style="flex:1"><span style="width:${done/t.checklist.length*100}%"></span></div></div>
+  return extrasCard(t)+`<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="small muted" style="white-space:nowrap">${done} of ${t.checklist.length} done</span><div class="lvl" style="flex:1"><span style="width:${done/t.checklist.length*100}%"></span></div></div>
   ${groups.map(g=>`<p class="group-h">${esc(g)}</p>${t.checklist.filter(i=>i.g===g).map(i=>`<div style="display:flex;align-items:center"><button class="cl-item${i.done?' done':''}" data-act="tick" data-id="${t.id}" data-c="${i.id}"><span class="box"></span><div class="body"><div class="t">${esc(i.t)}</div>${i.why?`<div class="why">${esc(i.why)}</div>`:''}</div></button><button class="x" style="color:var(--ink-3);font-size:18px;padding:0 6px" data-act="delCheck" data-id="${t.id}" data-c="${i.id}" aria-label="Remove">×</button></div>`).join('')}`).join('')}
   <div class="ask-row" style="margin-top:14px"><input id="cl-new" placeholder="Add your own item" enterkeyhint="done" autocomplete="off"><button class="btn" data-act="addCheck" data-id="${t.id}">Add</button></div>
   ${S.settings.apiKey?`<p style="margin-top:14px"><button class="link" data-act="genCheck" data-id="${t.id}" ${b?'disabled':''}>${b?'Rebuilding…':'Rebuild with AI (keeps your own items)'}</button></p>`:''}`;
@@ -1051,7 +1100,7 @@ function tCheck(t){
 function tLog(t){
   let h=`<div class="btn-row" style="margin-bottom:12px"><button class="btn small" data-act="logSheet" data-id="${t.id}">+ Log a place</button>${t.log.length?`<button class="btn small ghost" data-act="shareRecs" data-id="${t.id}">Share my recs</button>`:''}</div>`;
   if(!t.log.length)return h+`<div class="empty"><b>Your recommendations</b>Where you stayed, ate, drank and what you did — with photos. These become your tips for friends.</div>`;
-  return h+t.log.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(l=>`<div class="card me-card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div><p class="eyebrow">${LOG_IC[l.type]||'•'} ${esc(l.type)}${l.date?' · '+fmtD(l.date):''}</p><h3 style="margin-top:4px">${esc(l.name)}</h3></div><button class="x" style="color:var(--ink-3);font-size:16px" data-act="logSheet" data-id="${t.id}" data-l="${l.id}" aria-label="Edit">✎</button></div>${l.rating?`<span class="badge ${l.rating==='avoid'?'warn':'com'}">${LOG_RATE[l.rating]}</span>`:''}${(l.tags||[]).length?`<div class="pill-row">${l.tags.map(x=>`<span class="pill">${esc(x)}</span>`).join('')}</div>`:''}${l.note?`<p style="margin-top:8px">${esc(l.note)}</p>`:''}${l.cost!==''&&l.cost!=null?`<p class="small" style="margin-top:6px;color:var(--ink)">💷 ${money(l.cost,l.currency)}${l.per==='pp'?' per person':''}</p>`:''}
+  return h+t.log.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(l=>`<div class="card me-card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div><p class="eyebrow">${LOG_IC[l.type]||'•'} ${esc(l.type)}${l.date?' · '+fmtD(l.date):''}</p><h3 style="margin-top:4px">${esc(l.name)}</h3></div><div style="display:flex;gap:4px;flex-shrink:0"><button class="x" style="color:var(--ink-3);font-size:15px" data-act="shareOneRec" data-id="${t.id}" data-l="${l.id}" aria-label="Share this tip">↗</button><button class="x" style="color:var(--ink-3);font-size:16px" data-act="logSheet" data-id="${t.id}" data-l="${l.id}" aria-label="Edit">✎</button></div></div>${l.rating?`<span class="badge ${l.rating==='avoid'?'warn':'com'}">${LOG_RATE[l.rating]}</span>`:''}${(l.tags||[]).length?`<div class="pill-row">${l.tags.map(x=>`<span class="pill">${esc(x)}</span>`).join('')}</div>`:''}${l.note?`<p style="margin-top:8px">${esc(l.note)}</p>`:''}${l.cost!==''&&l.cost!=null?`<p class="small" style="margin-top:6px;color:var(--ink)">💷 ${money(l.cost,l.currency)}${l.per==='pp'?' per person':''}</p>`:''}
   <div class="links" style="margin-top:6px">${ext(safeUrl(l.link),(hostOf(l.link)||'Link')+' ↗')}${!['Flight','Watch-out'].includes(l.type)?ext(mapsSearch(l.type==='Airport'?(/airport/i.test(l.name)?l.name:l.name+' airport'):placeQ(t,l.name)),'Map ↗'):''}</div>${l.photos&&l.photos.length?`<div class="thumbs">${l.photos.map(p=>`<img data-photo="${p}" alt="" loading="lazy">`).join('')}</div>`:''}</div>`).join('');
 }
 
@@ -1121,6 +1170,10 @@ function vSettings(){
     <label class="toggle"><span><b style="display:block;font-size:14px">Look things up live</b><span class="hint">Searches the web for fresher info and official advice. Adds about 1p per search.</span></span><input type="checkbox" data-set="webSearch" ${st.webSearch?'checked':''}></label>
     <button class="btn block ghost" data-act="testKey" ${busy.test?'disabled':''}>${busy.test?'<span class="spinner dark"></span> Testing…':'Test the connection'}</button>
   </div>
+  <div class="section">${sectionH('Notifications')}
+    <label class="toggle"><span><b style="display:block;font-size:14px">Trip reminders</b><span class="hint">Day-countdown milestones and checklist nudges. Only fire while Hindsight is open or recently open on this phone — true background push needs a server this app doesn't have yet.</span></span><input type="checkbox" data-set="notify" ${st.notify?'checked':''}></label>
+    ${st.notify&&'Notification' in window&&Notification.permission==='denied'?`<p class="hint" style="margin-top:-6px">Blocked — allow notifications for this app in your phone's settings.</p>`:''}
+  </div>
   <div class="section">${sectionH('Your data')}
     <p class="small muted" style="margin-bottom:12px">Everything is saved on this phone only. Back up now and then — if you clear your browser data or lose the phone, a backup is the only copy. Backups don't include your API key.</p>
     <div class="btn-row"><button class="btn" data-act="export">Back up</button><button class="btn ghost" data-act="import">Restore</button></div>
@@ -1169,6 +1222,17 @@ function baseSheetR(){const b=D.base;const t=trip(b.trip);const stays=t.bookings
 function reviewSheetR(){const d=D.rev;return `<h2>Your review</h2><p class="sub">What was it actually like? This helps the AI next time, and you can share it with friends.</p>
   <div class="field"><label for="rev-text">Review</label><textarea id="rev-text" data-bind="rev.text" placeholder="What was it like? Would you go back?">${esc(d.text)}</textarea></div>
   <button class="btn block" data-act="saveReview">Save</button>`;}
+function sugSheetR(){const d=D.sug;const t=trip(d.trip);if(!t)return '';
+  const q=baseQ(t);const pq=placeQ(t,d.place||d.title);const sv=t.saved.some(x=>x.key===d.key);const mb=busy.sugmore;
+  return `<p class="eyebrow">${d.src==='chat'?'From your chat':'AI recommendation'}${d.cat?' · '+esc(d.cat):''}</p>
+  <h2 style="margin-top:2px">${esc(d.title)}</h2>
+  ${d.detail?`<p class="sub" style="margin-top:4px">${esc(d.detail)}</p>`:''}
+  ${d.why?`<div class="why" style="margin-top:8px"><b>For you:</b> ${esc(d.why)}</div>`:''}
+  ${d.getting?`<p class="getting" style="margin-top:8px">${gIcon(d.getting)} ${esc(d.getting)}${q?' <span class="hint">from your stay · estimate</span>':''}</p>`:''}
+  ${d.place?`<div class="links" style="margin-top:10px">${ext(mapsSearch(pq),'📍 '+esc(d.place)+' ↗')}${q?ext(mapsDir(q,pq),'Directions ↗'):''}</div>`:''}
+  <div class="card" style="margin-top:14px">${d.more?`<p class="eyebrow">✨ What people say online</p><p style="margin-top:6px;color:var(--ink)">${esc(d.more)}</p>`:S.settings.apiKey?`<button class="btn block ghost" data-act="sugMore" ${mb?'disabled':''}>${mb?'<span class="spinner dark"></span> Looking it up…':'✨ What do people say online?'}</button>`:`<p class="hint">Add your API key in Settings to see what people say online.</p>`}</div>
+  <div class="card" style="margin-top:10px"><p class="eyebrow">From the community</p><p class="hint" style="margin-top:6px">Coming soon — this will show tips from other Hindsight users once community features are built.</p></div>
+  <button class="btn block${sv?' ghost':''}" style="margin-top:16px" data-act="sugSave">${sv?'Saved ✓ — tap to remove':'Save to your list'}</button>`;}
 function tipSheetR(){const d=D.tip;return `<h2>${d.src==='friend'?"Add a friend's tip":'Add your own idea'}</h2><p class="sub">It goes into Saved, and you'll be asked how it was after the trip.</p>
   ${d.src==='friend'?`<div class="field"><label for="tp-from">Who's it from?</label><input id="tp-from" data-bind="tip.from" value="${esc(d.from)}" placeholder="e.g. Jayden" autocomplete="off"></div>`:''}
   <div class="field"><span class="lab">Category</span>${chips('tip','cat',CATS)}
@@ -1277,7 +1341,7 @@ document.addEventListener('input',e=>{
     if(el.id==='place-in'){$('#place-sugg').innerHTML=placeSugg(R.id,v);}
     if(el.dataset.live==='askPrev'){const t=trip(D.ask.trip);if(t)$('#askPrev').textContent=askText(t);}
   }
-  if(el.dataset.set){const k=el.dataset.set;S.settings[k]=el.type==='checkbox'?el.checked:el.value.trim();save();}
+  if(el.dataset.set){const k=el.dataset.set;S.settings[k]=el.type==='checkbox'?el.checked:el.value.trim();save();if(k==='notify'&&S.settings.notify)requestNotify();}
   if(el.dataset.tset){const t=trip(el.dataset.id);if(t){t[el.dataset.tset]=el.value===''?'':Number(el.value);save();}}
 });
 document.addEventListener('change',e=>{if(e.target.dataset.tset)render();});
@@ -1308,7 +1372,7 @@ const A={
     if(d.datesKnown){if(!d.from)return toast('Add your dates — or choose "Not yet"');if(!d.to)d.to=d.from;if(d.to<d.from)return toast('The end date is before the start date');}
     const fields={dest,country:d.country||guessCountry(dest),datesKnown:!!d.datesKnown,from:d.datesKnown?d.from:'',to:d.datesKnown?d.to:'',season:d.season,who:d.who,adults:d.who==='Solo'?1:(Number(d.adults)||1),kids:d.who==='Solo'?0:(Number(d.kids)||0),occasion:d.occasion,main:d.main,extras:(d.extras||[]).filter(x=>x!==d.main),budget:d.budget,stay:d.stay,origin:String(d.origin||'').trim(),event:String(d.event||'').trim(),notes:d.notes||''};
     if(d.id){const t=trip(d.id);Object.assign(t,fields);save();D.trip={};nav(`trip/${t.id}/plan`);toast(t.plan?'Saved — redo the plan if the changes matter':'Saved');return;}
-    const t={id:uid(),created:new Date().toISOString(),...fields,plan:null,itinerary:null,saved:[],bookings:[],checklist:null,log:[],chat:[],review:null,statusOverride:'',budgetAmount:'',base:null};
+    const t={id:uid(),created:new Date().toISOString(),...fields,plan:null,itinerary:null,saved:[],bookings:[],checklist:null,log:[],chat:[],review:null,statusOverride:'',budgetAmount:'',base:null,travelExtras:{lounge:'',parking:''},notifiedDays:[],checklistNotifiedAt:''};
     S.trips.push(t);save(true);D.trip={};nav(`trip/${t.id}/plan`);if(S.settings.apiKey)genPlan(t);},
   openTrip:el=>{if(!el.dataset.id)return nav('home');nav(`trip/${el.dataset.id}/${el.dataset.tab||'plan'}`);},
   tab:el=>{R.tab=el.dataset.tab;history.replaceState(null,'',`#/trip/${el.dataset.id}/${el.dataset.tab}`);render();const n=$('.tv-nav');if(n&&n.getBoundingClientRect().top<0)n.scrollIntoView();},
@@ -1345,6 +1409,17 @@ const A={
   saveTip:()=>{const d=D.tip;const t=trip(d.trip);if(!String(d.title||'').trim())return toast('What is it?');if(d.link&&!safeUrl(d.link))return toast('That link doesn\'t look right');const cat=String(d.catCustom||'').trim()||d.cat;t.saved.push({id:uid(),key:'',cat,title:d.title.trim(),detail:(d.detail||'').trim(),link:safeUrl(d.link),src:d.src,from:(d.from||'').trim(),state:'',more:'',review:'',inPlan:false});save();closeSheet();render();toast('Saved');},
   addSavedToPlan:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!s)return;s.inPlan=!s.inPlan;save();render();toast(s.inPlan?'Added to your plan':'Taken off your plan');},
   moreInfo:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(t&&s)moreInfo(t,s);},
+  openSug:el=>{const t=trip(el.dataset.id);if(!t)return;
+    if(el.dataset.src==='chat'){const r=t.chat[+el.dataset.m]&&t.chat[+el.dataset.m].recs[+el.dataset.r];if(!r)return;
+      D.sug={trip:t.id,src:'chat',key:recKey(r),title:r.title,detail:r.detail||'',why:'',getting:r.getting||'',place:r.place||'',cat:r.cat||'',more:''};}
+    else{const s=t.plan&&t.plan.sections.find(x=>x.key===el.dataset.k);const it=s&&s.items[+el.dataset.i];if(!it)return;
+      D.sug={trip:t.id,src:'sec',key:el.dataset.k+'|'+it.title,title:it.title,detail:it.detail||'',why:it.why||'',getting:it.getting||'',place:it.place||'',cat:SEC[el.dataset.k]?SEC[el.dataset.k].cat:'',more:''};}
+    openSheet(sugSheetR);},
+  sugSave:()=>{const d=D.sug;const t=trip(d.trip);if(!t)return;const i=t.saved.findIndex(x=>x.key===d.key);
+    if(i>=0){t.saved.splice(i,1);toast('Removed from Saved');}
+    else{t.saved.push({id:uid(),key:d.key,cat:d.cat,title:d.title,detail:d.detail,place:d.place,getting:d.getting,src:'ai',state:'',more:d.more||'',review:'',inPlan:false});toast('Saved — tap it to add it to your plan when you\'re ready');}
+    save();render();drawSheet();},
+  sugMore:()=>sugMore(),
   reviewSheet:el=>{const t=trip(el.dataset.id);const s=t.saved.find(x=>x.id===el.dataset.s);if(!t||!s)return;D.rev={trip:t.id,id:s.id,text:s.review||''};openSheet(reviewSheetR);},
   saveReview:()=>{const d=D.rev;const t=trip(d.trip);const s=t&&t.saved.find(x=>x.id===d.id);if(s){s.review=String(d.text||'').trim();save();}closeSheet();render();toast('Review saved');},
   genItin:el=>buildItinerary(trip(el.dataset.id)),
@@ -1361,6 +1436,7 @@ const A={
     l.saved=true;save();closeSheet();render();toast(l.id?'Saved':`Logged — +${5+(rec.photos.length?5:0)} points`);},
   delLog:()=>{const l=D.log;const t=trip(l.trip);if(!confirm('Delete this place?'))return;const ex=t.log.find(x=>x.id===l.id);t.log=t.log.filter(x=>x.id!==l.id);dropPhotos([...(ex&&ex.photos||[]),...(l.newPhotos||[])]);l.saved=true;save();closeSheet();render();},
   shareRecs:el=>shareRecs(trip(el.dataset.id)),
+  shareOneRec:el=>{const t=trip(el.dataset.id);shareOneRec(t,t&&t.log.find(x=>x.id===el.dataset.l));},
   bookSheet:el=>{const t=trip(el.dataset.id);const ex=el.dataset.b&&t.bookings.find(x=>x.id===el.dataset.b);D.book=ex?{link:'',address:'',...ex,trip:t.id}:{trip:t.id,id:null,type:'flight',title:'',start:'',time:'',end:'',cost:'',currency:'GBP',cancelBy:'',ref:'',notes:'',paste:'',link:'',address:''};openSheet(bookSheetR);},
   extract:()=>extractBooking(),
   saveBook:()=>{const b=D.book;const t=trip(b.trip);if(!String(b.title||'').trim())return toast('Give the booking a title');
@@ -1373,6 +1449,7 @@ const A={
   review:el=>{const t=trip(el.dataset.id);if(t)genReview(t);},
   genCheck:el=>{const t=trip(el.dataset.id);if(t)genChecklist(t);},
   basicCheck:el=>{const t=trip(el.dataset.id);t.checklist=BASIC_CHECK.map(([g,x])=>({id:uid(),g,t:x,why:'',done:false,mine:true}));save();render();},
+  setExtra:el=>{const t=trip(el.dataset.id);t.travelExtras=t.travelExtras||{lounge:'',parking:''};const k=el.dataset.k;t.travelExtras[k]=t.travelExtras[k]===el.dataset.v?'':el.dataset.v;save();render();},
   tick:el=>{const t=trip(el.dataset.id);const i=t.checklist.find(x=>x.id===el.dataset.c);i.done=!i.done;save();render();},
   delCheck:el=>{const t=trip(el.dataset.id);t.checklist=t.checklist.filter(x=>x.id!==el.dataset.c);save();render();},
   addCheck:el=>{const t=trip(el.dataset.id);const inp=$('#cl-new');const v=(inp&&inp.value||'').trim();if(!v)return;t.checklist.push({id:uid(),g:'My items',t:v,why:'',done:false,mine:true});save();render();const n=$('#cl-new');if(n)n.focus();},
@@ -1441,9 +1518,13 @@ $('#file-import').addEventListener('change',e=>{const f=e.target.files[0];if(f)i
 /* ================= share / backup ================= */
 async function share(text,title){if(navigator.share){try{await navigator.share({title,text});return;}catch(e){if(e.name==='AbortError')return;}}copy(text);}
 async function copy(text){try{await navigator.clipboard.writeText(text);toast('Copied — paste it into your group chat');}catch(_){window.prompt('Copy this:',text);}}
+const recText=l=>`${LOG_IC[l.type]||'•'} ${l.name}${l.rating?` — ${LOG_RATE[l.rating].replace(/^\S+\s/,'')}`:''}${(l.tags||[]).length?` (${l.tags.join(', ')})`:''}${l.note?`\n   ${l.note}`:''}${l.cost!==''&&l.cost!=null?`\n   Cost: ${money(l.cost,l.currency)}${l.per==='pp'?' pp':''}`:''}${l.link?`\n   ${l.link}`:''}`;
 function shareRecs(t){if(!t)return;if(!t.log.length)return toast('Log some places first');
-  const txt=`My tips for ${t.dest}${t.datesKnown&&t.from?` (${fmtRange(t.from,t.to)})`:''}:\n\n`+t.log.map(l=>`${LOG_IC[l.type]||'•'} ${l.name}${l.rating?` — ${LOG_RATE[l.rating].replace(/^\S+\s/,'')}`:''}${(l.tags||[]).length?` (${l.tags.join(', ')})`:''}${l.note?`\n   ${l.note}`:''}${l.cost!==''&&l.cost!=null?`\n   Cost: ${money(l.cost,l.currency)}${l.per==='pp'?' pp':''}`:''}${l.link?`\n   ${l.link}`:''}`).join('\n\n');
+  const txt=`My tips for ${t.dest}${t.datesKnown&&t.from?` (${fmtRange(t.from,t.to)})`:''}:\n\n`+t.log.map(recText).join('\n\n');
   share(txt,'Tips for '+t.dest);}
+function shareOneRec(t,l){if(!t||!l)return;
+  const txt=`My tip for ${t.dest} — ${l.name}:\n\n`+recText(l);
+  share(txt,l.name);}
 const blobToData=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b);});
 async function exportData(){
   toast('Preparing backup…');
@@ -1472,6 +1553,8 @@ let tt;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('sh
   await load();parse();render();
   if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
   window.addEventListener('online',()=>render());
+  checkReminders();
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkReminders();});
 })();
 </script>
 </body>
